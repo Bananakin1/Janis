@@ -155,7 +155,6 @@ class TestObsidianRESTClientSearch:
     async def test_search_success(self, rest_client, httpx_mock: HTTPXMock):
         """Test successful search."""
         httpx_mock.add_response(
-            url="https://127.0.0.1:27124/search/simple/",
             method="POST",
             json=[{"filename": "Note1.md"}, {"filename": "Note2.md"}],
         )
@@ -163,6 +162,11 @@ class TestObsidianRESTClientSearch:
         async with rest_client as client:
             results = await client.search("test query")
             assert len(results) == 2
+
+        request = httpx_mock.get_request()
+        assert request.url.path == "/search/simple/"
+        assert "query=test+query" in str(request.url)
+        assert "contextLength=100" in str(request.url)
 
 
 class TestObsidianRESTClientHealthCheck:

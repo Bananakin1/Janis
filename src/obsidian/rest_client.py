@@ -92,18 +92,19 @@ class ObsidianRESTClient:
         response.raise_for_status()
         return True
 
-    async def search(self, query: str) -> list[dict]:
+    async def search(self, query: str, context_length: int = 100) -> list[dict]:
         """Search for notes using simple text search.
 
         Args:
             query: Search query string.
+            context_length: Number of characters of context to return around matches.
 
         Returns:
             List of search results with filename and matches.
         """
         response = await self.client.post(
             "/search/simple/",
-            json={"query": query},
+            params={"query": query, "contextLength": context_length},
         )
         response.raise_for_status()
         return response.json()
