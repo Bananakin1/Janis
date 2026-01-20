@@ -1,0 +1,7 @@
+janis_venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+*.log
+.claude/
