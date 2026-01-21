@@ -102,7 +102,11 @@ class VaultIndex:
         for note_name in notes:
             path = self.get_note_path(note_name)
             if path:
-                rel_path = path.relative_to(self._vault_path)
+                # obsidiantools may return relative or absolute paths
+                if path.is_absolute():
+                    rel_path = path.relative_to(self._vault_path)
+                else:
+                    rel_path = path
                 if len(rel_path.parts) > 1:
                     folders.add(rel_path.parts[0])
 

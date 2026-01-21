@@ -28,6 +28,14 @@ class UpsertNoteParams(BaseModel):
     )
 
 
+class AskClarificationParams(BaseModel):
+    """Parameters for asking clarifying questions."""
+
+    ambiguous_term: str = Field(..., description="The user's term that matched multiple items")
+    matches: list[str] = Field(..., description="List of matching note names")
+    question: str = Field(..., description="Clarifying question to ask the user")
+
+
 def get_tool_definitions() -> list[dict]:
     """Get OpenAI function definitions for all tools.
 
@@ -91,6 +99,32 @@ def get_tool_definitions() -> list[dict]:
                         },
                     },
                     "required": ["note_name", "content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ask_clarification",
+                "description": "Ask the user to clarify an ambiguous reference BEFORE taking action. Use when search returns multiple matches.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ambiguous_term": {
+                            "type": "string",
+                            "description": "User's original term",
+                        },
+                        "matches": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Matching notes",
+                        },
+                        "question": {
+                            "type": "string",
+                            "description": "Question to ask",
+                        },
+                    },
+                    "required": ["ambiguous_term", "matches", "question"],
                 },
             },
         },

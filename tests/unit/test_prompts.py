@@ -9,27 +9,36 @@ from src.agent.prompts import build_system_prompt, SYSTEM_PROMPT_TEMPLATE
 class TestSystemPromptTemplate:
     """Tests for SYSTEM_PROMPT_TEMPLATE."""
 
-    def test_template_has_vault_context_placeholder(self):
-        """Test template contains vault_context placeholder."""
-        assert "{vault_context}" in SYSTEM_PROMPT_TEMPLATE
-
-    def test_template_has_today_placeholder(self):
-        """Test template contains today placeholder."""
+    def test_template_has_environment_placeholders(self):
+        """Test template contains environment placeholders."""
         assert "{today}" in SYSTEM_PROMPT_TEMPLATE
+        assert "{total_notes}" in SYSTEM_PROMPT_TEMPLATE
+        assert "{folders}" in SYSTEM_PROMPT_TEMPLATE
+        assert "{recent_notes}" in SYSTEM_PROMPT_TEMPLATE
+
+    def test_template_has_structured_blocks(self):
+        """Test template includes GPT-5.2 structured blocks."""
+        assert "<environment>" in SYSTEM_PROMPT_TEMPLATE
+        assert "</environment>" in SYSTEM_PROMPT_TEMPLATE
+        assert "<design_and_scope_constraints>" in SYSTEM_PROMPT_TEMPLATE
+        assert "</design_and_scope_constraints>" in SYSTEM_PROMPT_TEMPLATE
+        assert "<uncertainty_and_ambiguity>" in SYSTEM_PROMPT_TEMPLATE
+        assert "</uncertainty_and_ambiguity>" in SYSTEM_PROMPT_TEMPLATE
+        assert "<note_format>" in SYSTEM_PROMPT_TEMPLATE
+        assert "</note_format>" in SYSTEM_PROMPT_TEMPLATE
+        assert "<output_format>" in SYSTEM_PROMPT_TEMPLATE
+        assert "</output_format>" in SYSTEM_PROMPT_TEMPLATE
 
     def test_template_describes_tools(self):
         """Test template includes tool descriptions."""
         assert "search_notes" in SYSTEM_PROMPT_TEMPLATE
-        assert "read_note" in SYSTEM_PROMPT_TEMPLATE
-        assert "upsert_note" in SYSTEM_PROMPT_TEMPLATE
+        assert "ask_clarification" in SYSTEM_PROMPT_TEMPLATE
 
     def test_template_includes_folder_structure(self):
         """Test template includes folder structure information."""
         assert "Meetings/" in SYSTEM_PROMPT_TEMPLATE
-        assert "People/" in SYSTEM_PROMPT_TEMPLATE
-        assert "Projects/" in SYSTEM_PROMPT_TEMPLATE
-        assert "Topics/" in SYSTEM_PROMPT_TEMPLATE
-        assert "Inbox/" in SYSTEM_PROMPT_TEMPLATE
+        assert "Centring/" in SYSTEM_PROMPT_TEMPLATE
+        assert "Records/" in SYSTEM_PROMPT_TEMPLATE
 
     def test_template_includes_frontmatter_example(self):
         """Test template includes frontmatter example."""
@@ -49,7 +58,7 @@ class TestBuildSystemPrompt:
     def test_includes_total_notes(self):
         """Test that total notes count is included."""
         result = build_system_prompt({"total_notes": 42})
-        assert "42" in result
+        assert "42 notes" in result
 
     def test_includes_folders(self):
         """Test that folders are included."""
@@ -78,12 +87,17 @@ class TestBuildSystemPrompt:
     def test_handles_empty_summary(self):
         """Test that empty summary is handled gracefully."""
         result = build_system_prompt({})
-        assert "Total notes: 0" in result
+        assert "0 notes" in result
 
     def test_handles_empty_folders(self):
         """Test that empty folders list is handled."""
         result = build_system_prompt({"folders": []})
-        assert "Folders: None" in result
+        assert "folders: None" in result
+
+    def test_handles_empty_recent_notes(self):
+        """Test that empty recent notes is handled."""
+        result = build_system_prompt({"recent_notes": []})
+        assert "Recent: None" in result
 
     def test_limits_recent_notes_display(self):
         """Test that recent notes are limited."""
@@ -92,8 +106,6 @@ class TestBuildSystemPrompt:
         # Should only show first 5
         assert "Note 0" in result
         assert "Note 4" in result
-        # Note 10 should not appear in the recent notes section of vault context
-        # but may appear in template examples
 
     def test_no_placeholders_remaining(self):
         """Test that no unresolved placeholders remain."""
@@ -102,5 +114,7 @@ class TestBuildSystemPrompt:
             "folders": ["Test"],
             "recent_notes": ["Note"],
         })
-        assert "{vault_context}" not in result
         assert "{today}" not in result
+        assert "{total_notes}" not in result
+        assert "{folders}" not in result
+        assert "{recent_notes}" not in result

@@ -38,7 +38,8 @@ def setup_signal_handlers(bot: ObsidianBot) -> None:
         raise GracefulExit()
 
     signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    if sys.platform != "win32":
+        signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def main() -> None:

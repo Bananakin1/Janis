@@ -14,6 +14,7 @@ from src.agent.tools import (
     SearchNotesParams,
     ReadNoteParams,
     UpsertNoteParams,
+    AskClarificationParams,
     get_tool_definitions,
 )
 from src.agent.prompts import build_system_prompt
@@ -53,6 +54,19 @@ class Orchestrator:
         """
         return INVALID_CHARS.sub("-", name).strip()
 
+    def _strip_frontmatter(self, content: str) -> str:
+        """Strip YAML frontmatter from content if present.
+
+        Args:
+            content: Note content that may contain frontmatter.
+
+        Returns:
+            Content with frontmatter removed.
+        """
+        # Match YAML frontmatter: starts with ---, ends with ---
+        frontmatter_pattern = re.compile(r'^---\s*\n.*?\n---\s*\n?', re.DOTALL)
+        return frontmatter_pattern.sub('', content).lstrip()
+
     async def _execute_tool(
         self,
         tool_name: str,
@@ -82,7 +96,8 @@ class Orchestrator:
             note_path = self._vault_index.get_note_path(params.note_name)
             if note_path:
                 rel_path = note_path.relative_to(self._settings.obsidian_vault_path)
-                content = await rest_client.read_note(str(rel_path))
+                # Use forward slashes for REST API URLs regardless of OS
+                content = await rest_client.read_note(rel_path.as_posix())
             else:
                 # Try direct path
                 content = await rest_client.read_note(params.note_name)
@@ -103,12 +118,19 @@ class Orchestrator:
             existing = await rest_client.read_note(path)
             if existing:
                 today = datetime.now().strftime("%Y-%m-%d")
-                merged_content = f"{existing}\n\n---\n\n## {today}\n\n{params.content}"
+                # Strip any YAML frontmatter from content being appended
+                content_to_append = self._strip_frontmatter(params.content)
+                merged_content = f"{existing}\n\n---\n\n## {today}\n\n{content_to_append}"
                 await rest_client.upsert_note(path, merged_content)
                 return f"Updated note '{note_name}' in {folder}/"
             else:
                 await rest_client.upsert_note(path, params.content)
                 return f"Created note '{note_name}' in {folder}/"
+
+        elif tool_name == "ask_clarification":
+            params = AskClarificationParams(**arguments)
+            matches_list = "\n".join(f"- {m}" for m in params.matches)
+            return f"{params.question}\n\nMatches found:\n{matches_list}"
 
         return f"Unknown tool: {tool_name}"
 
@@ -148,6 +170,8 @@ class Orchestrator:
                     messages=messages,
                     tools=get_tool_definitions(),
                     tool_choice="auto",
+                    max_completion_tokens=4096,
+                    reasoning_effort=self._settings.reasoning_effort,
                 )
 
                 assistant_message = response.choices[0].message

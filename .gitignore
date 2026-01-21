@@ -5,3 +5,4 @@ __pycache__/
 .env.local
 *.log
 .claude/
+*.egg-info/

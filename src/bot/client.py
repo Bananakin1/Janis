@@ -100,10 +100,10 @@ class ObsidianBot(commands.Bot):
             async with message.channel.typing():
                 response = await self._orchestrator.process_message(content)
 
-            # Send response (split if needed)
-            chunks = split_message(response)
-            for chunk in chunks:
-                await message.reply(chunk)
+                # Send response (split if needed)
+                chunks = split_message(response)
+                for chunk in chunks:
+                    await message.reply(chunk)
 
         except Exception as e:
             logger.exception("Error processing message")

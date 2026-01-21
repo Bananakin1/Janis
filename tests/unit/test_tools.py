@@ -7,6 +7,7 @@ from src.agent.tools import (
     SearchNotesParams,
     ReadNoteParams,
     UpsertNoteParams,
+    AskClarificationParams,
     get_tool_definitions,
 )
 
@@ -76,6 +77,32 @@ class TestUpsertNoteParams:
             UpsertNoteParams(content="Content")
 
 
+class TestAskClarificationParams:
+    """Tests for AskClarificationParams model."""
+
+    def test_valid_params(self):
+        """Test valid clarification params."""
+        params = AskClarificationParams(
+            ambiguous_term="Sarah",
+            matches=["Sarah Chen", "Sarah Miller"],
+            question="Which Sarah did you mean?",
+        )
+        assert params.ambiguous_term == "Sarah"
+        assert params.matches == ["Sarah Chen", "Sarah Miller"]
+        assert params.question == "Which Sarah did you mean?"
+
+    def test_missing_required_raises(self):
+        """Test that missing required fields raises error."""
+        with pytest.raises(ValidationError):
+            AskClarificationParams(ambiguous_term="Sarah")
+
+        with pytest.raises(ValidationError):
+            AskClarificationParams(
+                ambiguous_term="Sarah",
+                matches=["Sarah Chen"],
+            )
+
+
 class TestGetToolDefinitions:
     """Tests for get_tool_definitions function."""
 
@@ -84,10 +111,10 @@ class TestGetToolDefinitions:
         definitions = get_tool_definitions()
         assert isinstance(definitions, list)
 
-    def test_has_three_tools(self):
-        """Test that there are exactly 3 tools defined."""
+    def test_has_four_tools(self):
+        """Test that there are exactly 4 tools defined."""
         definitions = get_tool_definitions()
-        assert len(definitions) == 3
+        assert len(definitions) == 4
 
     def test_tool_structure(self):
         """Test that each tool has correct structure."""
@@ -106,7 +133,7 @@ class TestGetToolDefinitions:
         definitions = get_tool_definitions()
         names = {tool["function"]["name"] for tool in definitions}
 
-        assert names == {"search_notes", "read_note", "upsert_note"}
+        assert names == {"search_notes", "read_note", "upsert_note", "ask_clarification"}
 
     def test_search_notes_schema(self):
         """Test search_notes tool schema."""
@@ -135,3 +162,19 @@ class TestGetToolDefinitions:
         assert "content" in params["required"]
         # folder is optional
         assert "folder" not in params.get("required", [])
+
+    def test_ask_clarification_schema(self):
+        """Test ask_clarification tool schema."""
+        definitions = get_tool_definitions()
+        clarify_tool = next(
+            t for t in definitions if t["function"]["name"] == "ask_clarification"
+        )
+
+        params = clarify_tool["function"]["parameters"]
+        assert "ambiguous_term" in params["properties"]
+        assert "matches" in params["properties"]
+        assert "question" in params["properties"]
+        assert params["properties"]["matches"]["type"] == "array"
+        assert "ambiguous_term" in params["required"]
+        assert "matches" in params["required"]
+        assert "question" in params["required"]

@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     default_note_folder: str = Field(
         default="Inbox", description="Default folder for new notes"
     )
+    reasoning_effort: str = Field(
+        default="medium",
+        description="Reasoning effort level: none, low, medium, high"
+    )
 
     @property
     def obsidian_api_url(self) -> str:
