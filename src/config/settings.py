@@ -26,9 +26,6 @@ class Settings(BaseSettings):
     azure_openai_deployment: str = Field(
         default="gpt-4o", description="Azure OpenAI deployment name"
     )
-    azure_openai_api_version: str = Field(
-        default="2024-08-01-preview", description="Azure OpenAI API version"
-    )
 
     # Obsidian
     obsidian_vault_path: Path = Field(..., description="Path to Obsidian vault")

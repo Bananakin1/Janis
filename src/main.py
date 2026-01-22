@@ -4,17 +4,27 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from src.config.settings import get_settings
 from src.bot.client import ObsidianBot
 
 
+# Create logs directory
+LOGS_DIR = Path(__file__).parent.parent / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
 # Configure logging
+log_filename = LOGS_DIR / f"janis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_filename, encoding="utf-8"),
+    ],
 )
 
 logger = logging.getLogger(__name__)

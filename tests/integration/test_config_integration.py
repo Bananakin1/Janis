@@ -22,7 +22,7 @@ class TestSettingsIntegration:
 
         assert settings.discord_token == "test-discord-token"
         assert settings.discord_channel_id == 123456789012345678
-        assert settings.azure_openai_endpoint == "https://test.openai.azure.com/"
+        assert settings.azure_openai_endpoint == "https://test.openai.azure.com"
         assert settings.azure_openai_api_key == "test-azure-key"
         assert settings.azure_openai_deployment == "gpt-4o"
         assert settings.obsidian_vault_path == Path(temp_vault)
@@ -45,7 +45,7 @@ class TestSettingsIntegration:
 
         # These are the defaults from the Settings class
         assert settings.azure_openai_deployment == "gpt-4o"
-        assert settings.azure_openai_api_version == "2024-08-01-preview"
+        # Note: api_version removed - v1 Responses API doesn't need it
         assert settings.obsidian_api_host == "127.0.0.1"
         assert settings.obsidian_api_port == 27124
         assert settings.default_note_folder == "Inbox"

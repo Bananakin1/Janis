@@ -91,6 +91,23 @@ class VaultIndex:
         """
         return list(self.vault.md_file_index.keys())
 
+    def get_hub_notes(self) -> list[str]:
+        """Get hub/index notes (ALL CAPS names).
+
+        Hub notes are assumed to be notes with names in ALL CAPS,
+        which typically serve as index or MOC (Map of Content) notes.
+
+        Returns:
+            Sorted list of hub note names.
+        """
+        hubs = []
+        for note_name in self.vault.md_file_index:
+            # Auto-detect: ALL CAPS names (ignoring spaces) are hub notes
+            name_no_spaces = note_name.replace(" ", "").replace(".", "")
+            if name_no_spaces.isupper() and len(name_no_spaces) > 1:
+                hubs.append(note_name)
+        return sorted(hubs)
+
     def get_vault_summary(self) -> dict:
         """Get summary statistics about the vault.
 

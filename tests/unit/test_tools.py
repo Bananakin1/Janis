@@ -117,32 +117,32 @@ class TestGetToolDefinitions:
         assert len(definitions) == 4
 
     def test_tool_structure(self):
-        """Test that each tool has correct structure."""
+        """Test that each tool has correct Responses API structure (flat, not nested)."""
         definitions = get_tool_definitions()
 
         for tool in definitions:
             assert "type" in tool
             assert tool["type"] == "function"
-            assert "function" in tool
-            assert "name" in tool["function"]
-            assert "description" in tool["function"]
-            assert "parameters" in tool["function"]
+            # Responses API uses flat structure - name/description at top level
+            assert "name" in tool
+            assert "description" in tool
+            assert "parameters" in tool
+            # Should NOT have nested "function" key (that's Chat Completions format)
+            assert "function" not in tool
 
     def test_tool_names(self):
         """Test that all expected tools are defined."""
         definitions = get_tool_definitions()
-        names = {tool["function"]["name"] for tool in definitions}
+        names = {tool["name"] for tool in definitions}
 
         assert names == {"search_notes", "read_note", "upsert_note", "ask_clarification"}
 
     def test_search_notes_schema(self):
         """Test search_notes tool schema."""
         definitions = get_tool_definitions()
-        search_tool = next(
-            t for t in definitions if t["function"]["name"] == "search_notes"
-        )
+        search_tool = next(t for t in definitions if t["name"] == "search_notes")
 
-        params = search_tool["function"]["parameters"]
+        params = search_tool["parameters"]
         assert params["type"] == "object"
         assert "query" in params["properties"]
         assert "query" in params["required"]
@@ -150,27 +150,27 @@ class TestGetToolDefinitions:
     def test_upsert_note_schema(self):
         """Test upsert_note tool schema."""
         definitions = get_tool_definitions()
-        upsert_tool = next(
-            t for t in definitions if t["function"]["name"] == "upsert_note"
-        )
+        upsert_tool = next(t for t in definitions if t["name"] == "upsert_note")
 
-        params = upsert_tool["function"]["parameters"]
+        params = upsert_tool["parameters"]
         assert "note_name" in params["properties"]
         assert "content" in params["properties"]
         assert "folder" in params["properties"]
         assert "note_name" in params["required"]
         assert "content" in params["required"]
-        # folder is optional
-        assert "folder" not in params.get("required", [])
+        # folder is required but nullable (strict mode requires all fields in required)
+        assert "folder" in params["required"]
+        assert params["properties"]["folder"]["type"] == ["string", "null"]
+        # Verify strict mode settings
+        assert upsert_tool.get("strict") is True
+        assert params.get("additionalProperties") is False
 
     def test_ask_clarification_schema(self):
         """Test ask_clarification tool schema."""
         definitions = get_tool_definitions()
-        clarify_tool = next(
-            t for t in definitions if t["function"]["name"] == "ask_clarification"
-        )
+        clarify_tool = next(t for t in definitions if t["name"] == "ask_clarification")
 
-        params = clarify_tool["function"]["parameters"]
+        params = clarify_tool["parameters"]
         assert "ambiguous_term" in params["properties"]
         assert "matches" in params["properties"]
         assert "question" in params["properties"]

@@ -6,3 +6,5 @@ __pycache__/
 *.log
 .claude/
 *.egg-info/
+logs/
+run_janis.bat

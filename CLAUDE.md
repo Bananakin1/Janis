@@ -1,6 +1,6 @@
 # Janis - Discord-Obsidian Agent
 
-Discord bot that manages an Obsidian vault via natural language using Azure OpenAI tool-calling.
+Discord bot that manages an Obsidian vault via natural language using Azure OpenAI Responses API.
 
 ## Quick Commands
 
@@ -24,7 +24,7 @@ Discord Message → ObsidianBot → Orchestrator → Azure OpenAI (tool-calling 
                               VaultIndex + RESTClient → Obsidian Vault
 ```
 
-**Tool-calling loop**: Max 5 iterations. LLM decides which tools to call, results feed back until final response.
+**Tool-calling loop**: Max 8 iterations. Uses Responses API - reasoning handled server-side, preventing chain-of-thought leakage.
 
 ## Project Structure
 
@@ -67,6 +67,7 @@ src/
 - **httpx** - Async HTTP client
 - **pydantic/pydantic-settings** - Validation and config
 - **obsidiantools** - Vault indexing
+- **tenacity** - Retry/backoff for API calls
 - **pytest/pytest-asyncio** - Testing
 
 ## Environment Variables
@@ -87,8 +88,16 @@ AZURE_OPENAI_DEPLOYMENT    # default: gpt-4o
 OBSIDIAN_API_HOST          # default: 127.0.0.1
 OBSIDIAN_API_PORT          # default: 27124
 DEFAULT_NOTE_FOLDER        # default: Inbox
-REASONING_EFFORT           # none/low/medium/high (default: medium)
+REASONING_EFFORT           # low/medium/high (default: medium)
 ```
+
+## Azure OpenAI Responses API
+
+This project uses the v1 Responses API (not Chat Completions):
+- Endpoint: `{AZURE_OPENAI_ENDPOINT}/openai/v1/responses`
+- No `api-version` parameter required
+- Reasoning traces handled server-side (prevents GPT-5 chain-of-thought leakage)
+- Tool format is flat (not nested under `function` key)
 
 ## Windows Compatibility
 
@@ -96,7 +105,8 @@ This project runs natively on Windows PowerShell (no WSL required).
 
 **Platform-specific code:**
 - `src/main.py:41` - SIGTERM handler skipped on Windows (only SIGINT/Ctrl+C)
-- `src/agent/orchestrator.py:86` - Uses `Path.as_posix()` for REST API paths
+- `src/agent/orchestrator.py:165,183` - Uses `Path.as_posix()` for REST API paths
+- `src/agent/orchestrator.py:91` - `_to_relative_path()` normalizes paths from obsidiantools
 
 **Path handling:** Always use `pathlib.Path`. For REST API URLs, convert with `.as_posix()` to ensure forward slashes.
 
@@ -136,9 +146,23 @@ rel_path = note_path.relative_to(vault_path)
 api_path = rel_path.as_posix()  # Always forward slashes
 ```
 
+## API Resilience
+
+**Retry/backoff** with tenacity for transient failures:
+- LLM calls: 3 attempts, exponential backoff (0.5s-30s), retries on `APIError`, `APIConnectionError`, `RateLimitError`
+- REST calls: 3 attempts, exponential backoff (0.25s-10s), retries on `ConnectError`, `TimeoutException`
+
+**Strict mode** for tool definitions:
+- All tools use `strict: true` for reliable schema adherence
+- `additionalProperties: false` on all parameter objects
+- `parallel_tool_calls: false` (required for strict mode)
+
 ## Gotchas
 
 - Obsidian REST API requires self-signed cert: `verify=False` in httpx
 - Discord message limit: 2000 chars (auto-chunked in client.py)
 - Vault index refreshes on every message (accuracy over performance)
 - No delete tool by design (safety)
+- LLM controls all output formatting (dates, separators) - orchestrator only strips frontmatter on appends
+- Vault index may return absolute or relative paths - use `_to_relative_path()` to normalize
+- Uses `AsyncOpenAI` (not `AsyncAzureOpenAI`) with custom `base_url` for Responses API

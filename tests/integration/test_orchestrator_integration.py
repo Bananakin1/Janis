@@ -17,9 +17,8 @@ def mock_settings(temp_vault):
     settings.obsidian_vault_path = temp_vault
     settings.obsidian_api_url = "https://127.0.0.1:27124"
     settings.obsidian_api_key = "test-key"
-    settings.azure_openai_endpoint = "https://test.openai.azure.com/"
+    settings.azure_openai_endpoint = "https://test.openai.azure.com"
     settings.azure_openai_api_key = "test-azure-key"
-    settings.azure_openai_api_version = "2024-08-01-preview"
     settings.azure_openai_deployment = "gpt-4o"
     settings.default_note_folder = "Inbox"
     settings.reasoning_effort = "medium"
@@ -32,7 +31,7 @@ class TestOrchestratorHealthCheck:
     @pytest.mark.asyncio
     async def test_check_health_returns_healthy(self, mock_settings):
         """Test check_health returns True when services are up."""
-        with patch("src.agent.orchestrator.AsyncAzureOpenAI"), \
+        with patch("src.agent.orchestrator.AsyncOpenAI"), \
              patch("src.agent.orchestrator.VaultIndex"), \
              patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
 
@@ -51,7 +50,7 @@ class TestOrchestratorHealthCheck:
     @pytest.mark.asyncio
     async def test_check_health_returns_unhealthy(self, mock_settings):
         """Test check_health returns False with error message when down."""
-        with patch("src.agent.orchestrator.AsyncAzureOpenAI"), \
+        with patch("src.agent.orchestrator.AsyncOpenAI"), \
              patch("src.agent.orchestrator.VaultIndex"), \
              patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
 
@@ -76,7 +75,7 @@ class TestOrchestratorSanitization:
     def orchestrator(self, mock_settings):
         """Create orchestrator with mocked dependencies."""
         with patch("src.agent.orchestrator.VaultIndex"), \
-             patch("src.agent.orchestrator.AsyncAzureOpenAI"):
+             patch("src.agent.orchestrator.AsyncOpenAI"):
             return Orchestrator(mock_settings)
 
     def test_sanitize_replaces_invalid_chars(self, orchestrator):
@@ -98,7 +97,7 @@ class TestOrchestratorObsidianOffline:
     @pytest.mark.asyncio
     async def test_returns_error_when_obsidian_offline(self, mock_settings):
         """Test orchestrator returns error when Obsidian is offline."""
-        with patch("src.agent.orchestrator.AsyncAzureOpenAI"), \
+        with patch("src.agent.orchestrator.AsyncOpenAI"), \
              patch("src.agent.orchestrator.VaultIndex") as MockVaultIndex, \
              patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
 
@@ -107,6 +106,7 @@ class TestOrchestratorObsidianOffline:
             mock_vault_index.get_vault_summary.return_value = {
                 "total_notes": 0, "folders": [], "recent_notes": []
             }
+            mock_vault_index.get_hub_notes.return_value = []
             MockVaultIndex.return_value = mock_vault_index
 
             # Mock REST client - offline
@@ -128,7 +128,7 @@ class TestOrchestratorDirectResponse:
     @pytest.mark.asyncio
     async def test_returns_llm_response_without_tools(self, mock_settings):
         """Test orchestrator returns LLM response when no tools needed."""
-        with patch("src.agent.orchestrator.AsyncAzureOpenAI") as MockLLM, \
+        with patch("src.agent.orchestrator.AsyncOpenAI") as MockLLM, \
              patch("src.agent.orchestrator.VaultIndex") as MockVaultIndex, \
              patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
 
@@ -137,6 +137,7 @@ class TestOrchestratorDirectResponse:
             mock_vault_index.get_vault_summary.return_value = {
                 "total_notes": 5, "folders": ["Inbox"], "recent_notes": []
             }
+            mock_vault_index.get_hub_notes.return_value = []
             MockVaultIndex.return_value = mock_vault_index
 
             # Mock REST client - online
@@ -146,13 +147,12 @@ class TestOrchestratorDirectResponse:
             mock_client.__aexit__.return_value = None
             MockClient.return_value = mock_client
 
-            # Mock LLM - direct response without tool calls
+            # Mock LLM - Responses API format (no tool calls)
             mock_llm = MagicMock()
             mock_response = MagicMock()
-            mock_response.choices = [MagicMock()]
-            mock_response.choices[0].message.tool_calls = None
-            mock_response.choices[0].message.content = "Hello! How can I help?"
-            mock_llm.chat.completions.create = AsyncMock(return_value=mock_response)
+            mock_response.output = []  # No function calls
+            mock_response.output_text = "Hello! How can I help?"
+            mock_llm.responses.create = AsyncMock(return_value=mock_response)
             MockLLM.return_value = mock_llm
 
             orchestrator = Orchestrator(mock_settings)

@@ -17,10 +17,8 @@ def temp_vault() -> Generator[Path, None, None]:
 
         # Create folder structure
         (vault_path / "Meetings").mkdir()
-        (vault_path / "People").mkdir()
-        (vault_path / "Projects").mkdir()
-        (vault_path / "Topics").mkdir()
-        (vault_path / "Inbox").mkdir()
+        (vault_path / "Centring").mkdir()
+        (vault_path / "Records").mkdir()
 
         # Create sample notes
         (vault_path / "Meetings" / "Team Standup.md").write_text(
@@ -45,7 +43,7 @@ Daily standup meeting notes.
 """
         )
 
-        (vault_path / "People" / "Sarah Chen.md").write_text(
+        (vault_path / "Meetings" / "Sarah Chen.md").write_text(
             """---
 title: Sarah Chen
 type: person
@@ -60,7 +58,7 @@ Senior Engineer on the platform team.
 """
         )
 
-        (vault_path / "People" / "John Smith.md").write_text(
+        (vault_path / "Meetings" / "John Smith.md").write_text(
             """---
 title: John Smith
 type: person
@@ -75,7 +73,7 @@ Product Manager.
 """
         )
 
-        (vault_path / "Projects" / "Project Alpha.md").write_text(
+        (vault_path / "Centring" / "Project Alpha.md").write_text(
             """---
 title: Project Alpha
 type: project
@@ -90,7 +88,7 @@ Main project for Q1.
 """
         )
 
-        (vault_path / "Inbox" / "Quick Note.md").write_text(
+        (vault_path / "Records" / "Quick Note.md").write_text(
             """---
 title: Quick Note
 type: general
@@ -114,15 +112,15 @@ def mock_env_vars(temp_vault: Path) -> Generator[dict, None, None]:
     env_vars = {
         "DISCORD_TOKEN": "test-discord-token",
         "DISCORD_CHANNEL_ID": "123456789012345678",
-        "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/",
+        "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com",
         "AZURE_OPENAI_API_KEY": "test-azure-key",
         "AZURE_OPENAI_DEPLOYMENT": "gpt-4o",
-        "AZURE_OPENAI_API_VERSION": "2024-08-01-preview",
         "OBSIDIAN_VAULT_PATH": str(temp_vault),
         "OBSIDIAN_API_HOST": "127.0.0.1",
         "OBSIDIAN_API_PORT": "27124",
         "OBSIDIAN_API_KEY": "test-obsidian-key",
         "DEFAULT_NOTE_FOLDER": "Inbox",
+        "REASONING_EFFORT": "medium",
     }
 
     with patch.dict(os.environ, env_vars, clear=False):
@@ -131,31 +129,17 @@ def mock_env_vars(temp_vault: Path) -> Generator[dict, None, None]:
 
 @pytest.fixture
 def mock_llm_response():
-    """Create a mock LLM response factory."""
+    """Create a mock LLM response factory for Responses API format."""
 
     def create_response(content: str = None, tool_calls: list = None):
         response = MagicMock()
-        response.choices = [MagicMock()]
-        message = response.choices[0].message
-        message.content = content
-        message.tool_calls = tool_calls
-        message.model_dump.return_value = {
-            "role": "assistant",
-            "content": content,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in (tool_calls or [])
-            ]
-            if tool_calls
-            else None,
-        }
+        response.output_text = content
+
+        if tool_calls:
+            response.output = tool_calls
+        else:
+            response.output = []
+
         return response
 
     return create_response
@@ -163,13 +147,20 @@ def mock_llm_response():
 
 @pytest.fixture
 def mock_tool_call():
-    """Create a mock tool call factory."""
+    """Create a mock tool call factory for Responses API format."""
 
     def create_tool_call(call_id: str, name: str, arguments: str):
         tool_call = MagicMock()
-        tool_call.id = call_id
-        tool_call.function.name = name
-        tool_call.function.arguments = arguments
+        tool_call.type = "function_call"
+        tool_call.call_id = call_id
+        tool_call.name = name
+        tool_call.arguments = arguments
+        tool_call.model_dump.return_value = {
+            "type": "function_call",
+            "call_id": call_id,
+            "name": name,
+            "arguments": arguments,
+        }
         return tool_call
 
     return create_tool_call

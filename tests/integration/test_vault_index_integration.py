@@ -140,7 +140,7 @@ class TestVaultIndexWithRealVault:
         assert index.note_exists("New Note") is False
 
         # Add a new note
-        new_note_path = temp_vault / "Inbox" / "New Note.md"
+        new_note_path = temp_vault / "Records" / "New Note.md"
         new_note_path.write_text("# New Note\n\nNew content.")
 
         # Should still not exist (cached)

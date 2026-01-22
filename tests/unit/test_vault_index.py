@@ -23,6 +23,36 @@ def mock_vault():
 
 
 @pytest.fixture
+def mock_vault_with_hubs():
+    """Create a mock Vault object with hub notes."""
+    vault = MagicMock()
+    vault.md_file_index = {
+        "MEETINGS": Path("/vault/MEETINGS.md"),
+        "CENTRING 2.0": Path("/vault/Centring/CENTRING 2.0.md"),
+        "RECORDS": Path("/vault/RECORDS.md"),
+        "Meeting Notes": Path("/vault/Meetings/Meeting Notes.md"),
+        "Sarah Chen": Path("/vault/People/Sarah Chen.md"),
+        "Quick Note": Path("/vault/Inbox/Quick Note.md"),
+        "AI": Path("/vault/AI.md"),  # Two chars, should be hub
+        "I": Path("/vault/I.md"),  # Single char, should NOT be hub
+    }
+    vault.get_backlinks.return_value = []
+    return vault
+
+
+@pytest.fixture
+def vault_index_with_hubs(mock_vault_with_hubs):
+    """Create a VaultIndex with mocked Vault containing hub notes."""
+    with patch("src.obsidian.vault_index.Vault") as MockVault:
+        instance = MockVault.return_value
+        instance.connect.return_value = mock_vault_with_hubs
+
+        index = VaultIndex(Path("/vault"))
+        index.refresh()
+        return index
+
+
+@pytest.fixture
 def vault_index(mock_vault):
     """Create a VaultIndex with mocked Vault."""
     with patch("src.obsidian.vault_index.Vault") as MockVault:
@@ -153,3 +183,54 @@ class TestVaultIndexGetVaultSummary:
         summary = vault_index.get_vault_summary()
         assert "recent_notes" in summary
         assert isinstance(summary["recent_notes"], list)
+
+
+class TestVaultIndexGetHubNotes:
+    """Tests for VaultIndex.get_hub_notes method."""
+
+    def test_detects_all_caps_hub_notes(self, vault_index_with_hubs):
+        """Test that ALL CAPS notes are detected as hubs."""
+        hubs = vault_index_with_hubs.get_hub_notes()
+        assert "MEETINGS" in hubs
+        assert "RECORDS" in hubs
+
+    def test_detects_all_caps_with_spaces(self, vault_index_with_hubs):
+        """Test that ALL CAPS notes with spaces are detected."""
+        hubs = vault_index_with_hubs.get_hub_notes()
+        assert "CENTRING 2.0" in hubs
+
+    def test_detects_short_all_caps(self, vault_index_with_hubs):
+        """Test that short ALL CAPS notes (2+ chars) are detected."""
+        hubs = vault_index_with_hubs.get_hub_notes()
+        assert "AI" in hubs
+
+    def test_ignores_single_char_caps(self, vault_index_with_hubs):
+        """Test that single character notes are not detected as hubs."""
+        hubs = vault_index_with_hubs.get_hub_notes()
+        assert "I" not in hubs
+
+    def test_excludes_mixed_case_notes(self, vault_index_with_hubs):
+        """Test that mixed case notes are not detected as hubs."""
+        hubs = vault_index_with_hubs.get_hub_notes()
+        assert "Meeting Notes" not in hubs
+        assert "Sarah Chen" not in hubs
+        assert "Quick Note" not in hubs
+
+    def test_returns_sorted_list(self, vault_index_with_hubs):
+        """Test that hub notes are returned sorted."""
+        hubs = vault_index_with_hubs.get_hub_notes()
+        assert hubs == sorted(hubs)
+
+    def test_empty_vault_returns_empty_list(self):
+        """Test that empty vault returns empty hub list."""
+        with patch("src.obsidian.vault_index.Vault") as MockVault:
+            mock_vault = MagicMock()
+            mock_vault.md_file_index = {}
+            instance = MockVault.return_value
+            instance.connect.return_value = mock_vault
+
+            index = VaultIndex(Path("/vault"))
+            index.refresh()
+
+            hubs = index.get_hub_notes()
+            assert hubs == []

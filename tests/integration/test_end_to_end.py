@@ -16,13 +16,13 @@ def e2e_settings(temp_vault):
     settings.obsidian_vault_path = temp_vault
     settings.obsidian_api_url = "https://127.0.0.1:27124"
     settings.obsidian_api_key = "test-key"
-    settings.azure_openai_endpoint = "https://test.openai.azure.com/"
+    settings.azure_openai_endpoint = "https://test.openai.azure.com"
     settings.azure_openai_api_key = "test-azure-key"
-    settings.azure_openai_api_version = "2024-08-01-preview"
     settings.azure_openai_deployment = "gpt-4o"
     settings.default_note_folder = "Inbox"
     settings.discord_token = "test-token"
     settings.discord_channel_id = 123456789012345678
+    settings.reasoning_effort = "medium"
     return settings
 
 

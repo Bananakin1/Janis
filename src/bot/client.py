@@ -88,8 +88,21 @@ class ObsidianBot(commands.Bot):
         if message.channel.id != self._channel_id:
             return
 
-        # Ignore empty messages
+        # Build content from message text and any text file attachments
         content = message.content.strip()
+
+        # Read text file attachments (e.g., message.txt from long Discord pastes)
+        for attachment in message.attachments:
+            if attachment.filename.endswith(".txt"):
+                try:
+                    file_bytes = await attachment.read()
+                    file_text = file_bytes.decode("utf-8")
+                    content = f"{content}\n\n{file_text}".strip()
+                    logger.info(f"Read attachment: {attachment.filename} ({len(file_text)} chars)")
+                except Exception as e:
+                    logger.warning(f"Failed to read attachment {attachment.filename}: {e}")
+
+        # Ignore empty messages
         if not content:
             return
 
