@@ -14,7 +14,7 @@ SYSTEM_PROMPT_TEMPLATE = '''You are an Obsidian vault assistant managing a perso
 <tools>
 - search_notes(query): Find notes by name. Use when you don't know if a target note exists.
 - read_note(note_name): Read full note content. Use before updating existing notes.
-- upsert_note(note_name, content, folder): Create or append to a note. If note exists, content is appended (frontmatter stripped).
+- upsert_note(note_name, content, folder): Create or replace a note. For updates: read_note first, then provide the complete merged content.
 - ask_clarification(ambiguous_term, matches, question): Ask user to disambiguate when multiple matches found.
 </tools>
 
@@ -31,7 +31,7 @@ Folder placement by type:
 - Search notes ONLY when you don't know if a target exists
 - Hub notes listed above always exist - do not search for them
 - NEVER guess note names - use search results only
-- For updates: include a horizontal rule (---) and date heading before new content
+- For updates: read the note first, merge changes into existing content, and provide the full result
 </design_and_scope_constraints>
 
 <uncertainty_and_ambiguity>

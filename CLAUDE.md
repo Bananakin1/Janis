@@ -84,7 +84,7 @@ OBSIDIAN_API_KEY
 
 Optional:
 ```
-AZURE_OPENAI_DEPLOYMENT    # default: gpt-4o
+AZURE_OPENAI_DEPLOYMENT    # default: gpt-4o (currently set to gpt-5.2)
 OBSIDIAN_API_HOST          # default: 127.0.0.1
 OBSIDIAN_API_PORT          # default: 27124
 DEFAULT_NOTE_FOLDER        # default: Inbox

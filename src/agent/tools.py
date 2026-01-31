@@ -84,7 +84,7 @@ def get_tool_definitions() -> list[dict]:
         {
             "type": "function",
             "name": "upsert_note",
-            "description": "Create a new note or update an existing one. When updating, new content is appended. Always include proper YAML frontmatter with title, type, tags, created date, and related links.",
+            "description": "Create a new note or replace an existing one. When updating, always read_note first, then provide the complete note content with your changes merged in. Always include proper YAML frontmatter with title, type, tags, created date, and related links.",
             "strict": True,
             "parameters": {
                 "type": "object",

@@ -93,19 +93,6 @@ class Orchestrator:
         """
         return INVALID_CHARS.sub("-", name).strip()
 
-    def _strip_frontmatter(self, content: str) -> str:
-        """Strip YAML frontmatter from content if present.
-
-        Args:
-            content: Note content that may contain frontmatter.
-
-        Returns:
-            Content with frontmatter removed.
-        """
-        # Match YAML frontmatter: starts with ---, ends with ---
-        frontmatter_pattern = re.compile(r'^---\s*\n.*?\n---\s*\n?', re.DOTALL)
-        return frontmatter_pattern.sub('', content).lstrip()
-
     def _to_relative_path(self, path: Path) -> Path:
         """Convert path to be relative to vault root.
 
@@ -200,17 +187,13 @@ class Orchestrator:
             existing_path = self._vault_index.get_note_path(params.note_name)
 
             if existing_path:
-                # Note exists - use its actual location (don't sanitize existing names)
+                # Note exists - replace with full content provided by LLM
                 rel_path = self._to_relative_path(existing_path)
                 api_path = rel_path.with_suffix('').as_posix()  # REST client adds .md
                 folder_name = rel_path.parent.as_posix()
 
-                existing_content = await rest_client.read_note(api_path)
-                if existing_content:
-                    content_to_append = self._strip_frontmatter(params.content)
-                    merged_content = f"{existing_content}\n\n{content_to_append}"
-                    await rest_client.upsert_note(api_path, merged_content)
-                    return f"Updated note '{params.note_name}' in {folder_name}/"
+                await rest_client.upsert_note(api_path, params.content)
+                return f"Updated note '{params.note_name}' in {folder_name}/"
 
             # Note doesn't exist - create new with sanitized name
             note_name = self._sanitize_note_name(params.note_name)

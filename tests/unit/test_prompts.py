@@ -80,7 +80,7 @@ class TestBuildSystemPrompt:
 
     def test_includes_today_date(self):
         """Test that today's date is included."""
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%m/%d/%Y")
         result = build_system_prompt({})
         assert today in result
 

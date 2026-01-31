@@ -231,7 +231,3 @@ python -m pytest tests/unit/ -v
 | Bot not responding | Check `DISCORD_CHANNEL_ID` matches the channel you're messaging |
 | API errors | Verify your Azure credentials with Victor |
 | SSL certificate errors | Expected for local Obsidian REST API (uses self-signed cert) |
-
-## License
-
-MIT
