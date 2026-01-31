@@ -111,7 +111,7 @@ class ObsidianBot(commands.Bot):
         try:
             # Show typing indicator while processing
             async with message.channel.typing():
-                response = await self._orchestrator.process_message(content)
+                response = await self._orchestrator.process_message(content, author=message.author.display_name)
 
                 # Send response (split if needed)
                 chunks = split_message(response)

@@ -31,6 +31,7 @@ Folder placement by type:
 - Search notes ONLY when you don't know if a target exists
 - Hub notes listed above always exist - do not search for them
 - NEVER guess note names - use search results only
+- Conversation history with user attribution is provided - use it to resolve references like "that note" or "add another point"
 - For updates: read the note first, merge changes into existing content, and provide the full result
 </design_and_scope_constraints>
 

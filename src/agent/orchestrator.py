@@ -3,6 +3,8 @@
 import json
 import logging
 import re
+from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -65,6 +67,15 @@ INVALID_CHARS = re.compile(r'[/\\:*?"<>|]')
 MAX_TOOL_ITERATIONS = 8
 
 
+@dataclass
+class ConversationTurn:
+    """A single turn in the conversation history."""
+
+    role: str       # "user" or "assistant"
+    author: str     # display name or "Janis"
+    content: str
+
+
 class Orchestrator:
     """Main agent orchestrator for processing messages through Azure OpenAI Responses API."""
 
@@ -76,6 +87,7 @@ class Orchestrator:
         """
         self._settings = settings
         self._vault_index = VaultIndex(settings.obsidian_vault_path)
+        self._history: deque[ConversationTurn] = deque(maxlen=4)
         # Use base OpenAI client with Azure's v1 Responses API endpoint
         self._llm = AsyncOpenAI(
             api_key=settings.azure_openai_api_key,
@@ -209,11 +221,12 @@ class Orchestrator:
 
         return f"Unknown tool: {tool_name}"
 
-    async def process_message(self, user_message: str) -> str:
+    async def process_message(self, user_message: str, author: str = "User") -> str:
         """Process a user message through the agent.
 
         Args:
             user_message: Natural language message from the user.
+            author: Display name of the message author.
 
         Returns:
             Agent response string.
@@ -232,8 +245,17 @@ class Orchestrator:
         # Responses API input format
         input_items = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
         ]
+
+        # Inject conversation history for multi-turn context
+        for turn in self._history:
+            if turn.role == "user":
+                input_items.append({"role": "user", "content": f"[{turn.author}]: {turn.content}"})
+            else:
+                input_items.append({"role": "assistant", "content": turn.content})
+
+        # Current message with author attribution
+        input_items.append({"role": "user", "content": f"[{author}]: {user_message}"})
 
         async with ObsidianRESTClient(
             self._settings.obsidian_api_url,
@@ -260,7 +282,10 @@ class Orchestrator:
                 if not tool_calls:
                     output_text = response.output_text or ""
                     logger.debug(f"[Iteration {iteration + 1}] No tool calls, final response: {output_text[:200] if output_text else 'None'}...")
-                    return output_text or "I processed your request."
+                    response_text = output_text or "I processed your request."
+                    self._history.append(ConversationTurn("user", author, user_message))
+                    self._history.append(ConversationTurn("assistant", "Janis", response_text))
+                    return response_text
 
                 # Log tool calls
                 logger.info(f"[Iteration {iteration + 1}] LLM requested {len(tool_calls)} tool call(s)")
@@ -306,7 +331,10 @@ class Orchestrator:
                 "content": "You have run out of tool calls. Summarize what you accomplished and what you could not complete.",
             })
             response = await self._call_llm(input_items, tools=None)
-            return response.output_text or "I processed your request."
+            response_text = response.output_text or "I processed your request."
+            self._history.append(ConversationTurn("user", author, user_message))
+            self._history.append(ConversationTurn("assistant", "Janis", response_text))
+            return response_text
 
     async def check_health(self) -> tuple[bool, Optional[str]]:
         """Check if all services are healthy.

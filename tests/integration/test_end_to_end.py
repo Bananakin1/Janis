@@ -67,7 +67,8 @@ class TestEndToEndBotResponse:
 
                 # Verify the full flow
                 mock_orchestrator.process_message.assert_called_once_with(
-                    "Find my meeting notes"
+                    "Find my meeting notes",
+                    author=message.author.display_name,
                 )
                 message.reply.assert_called_once_with("I found your notes.")
 

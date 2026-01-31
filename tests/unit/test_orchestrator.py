@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.agent.orchestrator import Orchestrator, INVALID_CHARS
+from src.agent.orchestrator import Orchestrator, ConversationTurn, INVALID_CHARS
 
 
 @pytest.fixture
@@ -354,3 +354,108 @@ class TestOrchestratorMaxIterations:
             assert last_user_message is not None
             assert "run out of tool calls" in last_user_message["content"]
             assert "Summarize" in last_user_message["content"]
+
+
+class TestOrchestratorConversationHistory:
+    """Tests for conversation history (working memory)."""
+
+    @pytest.fixture
+    def orchestrator(self, mock_settings):
+        """Create orchestrator with mocked dependencies."""
+        with patch("src.agent.orchestrator.VaultIndex") as MockVaultIndex, \
+             patch("src.agent.orchestrator.AsyncOpenAI") as MockLLM:
+
+            mock_vault_index = MagicMock()
+            mock_vault_index.get_vault_summary.return_value = {
+                "total_notes": 10,
+                "folders": ["Meetings", "People"],
+                "recent_notes": ["Note1", "Note2"],
+            }
+            mock_vault_index.get_hub_notes.return_value = ["MEETINGS", "RECORDS"]
+            MockVaultIndex.return_value = mock_vault_index
+
+            mock_llm = MagicMock()
+            MockLLM.return_value = mock_llm
+
+            orch = Orchestrator(mock_settings)
+            orch._llm = mock_llm
+            return orch
+
+    def _setup_simple_response(self, orchestrator, response_text="Done"):
+        """Configure orchestrator to return a simple text response."""
+        with patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
+            mock_client = AsyncMock()
+            mock_client.health_check.return_value = True
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            MockClient.return_value = mock_client
+
+            mock_response = MagicMock()
+            mock_response.output = []
+            mock_response.output_text = response_text
+            orchestrator._llm.responses.create = AsyncMock(return_value=mock_response)
+
+            return MockClient
+
+    @pytest.mark.asyncio
+    async def test_history_populated_after_call(self, orchestrator):
+        """Test that history contains user and assistant turns after a call."""
+        with self._setup_simple_response(orchestrator, "Response text"):
+            await orchestrator.process_message("Hello", author="Alice")
+
+        assert len(orchestrator._history) == 2
+        assert orchestrator._history[0] == ConversationTurn("user", "Alice", "Hello")
+        assert orchestrator._history[1] == ConversationTurn("assistant", "Janis", "Response text")
+
+    @pytest.mark.asyncio
+    async def test_history_injected_into_llm_input(self, orchestrator):
+        """Test that history entries appear in LLM input on second call."""
+        # First call
+        with self._setup_simple_response(orchestrator, "First response"):
+            await orchestrator.process_message("First message", author="Alice")
+
+        # Second call
+        with self._setup_simple_response(orchestrator, "Second response"):
+            await orchestrator.process_message("Second message", author="Bob")
+
+        # Check the input_items from the second LLM call
+        call_args = orchestrator._llm.responses.create.call_args
+        input_items = call_args.kwargs.get("input", [])
+
+        # Should have: system, history user, history assistant, current user
+        assert input_items[0]["role"] == "system"
+        assert input_items[1] == {"role": "user", "content": "[Alice]: First message"}
+        assert input_items[2] == {"role": "assistant", "content": "First response"}
+        assert input_items[3] == {"role": "user", "content": "[Bob]: Second message"}
+
+    @pytest.mark.asyncio
+    async def test_author_attribution_format(self, orchestrator):
+        """Test that current message uses [Author]: format."""
+        with self._setup_simple_response(orchestrator, "OK"):
+            await orchestrator.process_message("Test msg", author="Charlie")
+
+        call_args = orchestrator._llm.responses.create.call_args
+        input_items = call_args.kwargs.get("input", [])
+
+        user_msg = input_items[-1]
+        assert user_msg["content"] == "[Charlie]: Test msg"
+
+    @pytest.mark.asyncio
+    async def test_history_default_author(self, orchestrator):
+        """Test that default author is 'User'."""
+        with self._setup_simple_response(orchestrator, "OK"):
+            await orchestrator.process_message("Hello")
+
+        assert orchestrator._history[0].author == "User"
+
+    @pytest.mark.asyncio
+    async def test_history_maxlen(self, orchestrator):
+        """Test that history is bounded to 4 entries (2 turns)."""
+        for i in range(3):
+            with self._setup_simple_response(orchestrator, f"Response {i}"):
+                await orchestrator.process_message(f"Message {i}", author="User")
+
+        # maxlen=4 means only last 2 turns (4 entries) are kept
+        assert len(orchestrator._history) == 4
+        assert orchestrator._history[0] == ConversationTurn("user", "User", "Message 1")
+        assert orchestrator._history[1] == ConversationTurn("assistant", "Janis", "Response 1")

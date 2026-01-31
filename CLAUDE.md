@@ -26,6 +26,8 @@ Discord Message → ObsidianBot → Orchestrator → Azure OpenAI (tool-calling 
 
 **Tool-calling loop**: Max 8 iterations. Uses Responses API - reasoning handled server-side, preventing chain-of-thought leakage.
 
+**Working memory**: In-memory ring buffer (`deque`, maxlen=4) stores the last 2 conversation turns (user + assistant each). History is injected into `input_items` before the current message. User messages are attributed as `[DisplayName]: message`. `process_message(user_message, author="User")` accepts an `author` parameter passed from `message.author.display_name` in Discord.
+
 ## Project Structure
 
 ```
