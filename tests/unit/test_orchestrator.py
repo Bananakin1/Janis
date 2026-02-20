@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.agent.orchestrator import Orchestrator, ConversationTurn, INVALID_CHARS
+from src.agent.orchestrator import Orchestrator, ConversationTurn, INVALID_CHARS, DATE_HEADING_RE
 
 
 @pytest.fixture
@@ -459,3 +459,258 @@ class TestOrchestratorConversationHistory:
         assert len(orchestrator._history) == 4
         assert orchestrator._history[0] == ConversationTurn("user", "User", "Message 1")
         assert orchestrator._history[1] == ConversationTurn("assistant", "Janis", "Response 1")
+
+
+class TestOrchestratorPrependToNote:
+    """Tests for Orchestrator._prepend_to_note static method."""
+
+    def test_prepend_inserts_before_first_date_heading(self):
+        """New content is inserted before the first date heading."""
+        existing = (
+            "---\ntitle: Curinos\n---\n\n"
+            "## People\n| Name | Role | Notes |\n|---|---|---|\n| Olly | PM | |\n\n"
+            "## 01/13/2026\n**With:** Olly\nOld meeting notes\n"
+        )
+        new = "## 02/20/2026\n**With:** Olly\nNew meeting notes"
+
+        result = Orchestrator._prepend_to_note(existing, new)
+
+        idx_new = result.index("## 02/20/2026")
+        idx_old = result.index("## 01/13/2026")
+        assert idx_new < idx_old
+
+    def test_prepend_preserves_frontmatter(self):
+        """Frontmatter stays at the top of the note."""
+        existing = "---\ntitle: Test\n---\n\n## 12/01/2025\nOld notes\n"
+        new = "## 01/15/2026\nNew notes"
+
+        result = Orchestrator._prepend_to_note(existing, new)
+
+        assert result.startswith("---\ntitle: Test\n---")
+        assert result.index("---") < result.index("## 01/15/2026")
+
+    def test_prepend_preserves_people_table(self):
+        """People table stays between frontmatter and date sections."""
+        existing = (
+            "---\ntitle: ITK\n---\n\n"
+            "## People\n| Name | Role | Notes |\n|---|---|---|\n| Joe | CTO | |\n\n"
+            "## 12/09/2025\n**With:** Joe\nFirst meeting\n"
+        )
+        new = "## 02/20/2026\n**With:** Joe\nSecond meeting"
+
+        result = Orchestrator._prepend_to_note(existing, new)
+
+        idx_people = result.index("## People")
+        idx_new = result.index("## 02/20/2026")
+        idx_old = result.index("## 12/09/2025")
+        assert idx_people < idx_new < idx_old
+
+    def test_prepend_no_existing_dates_appends(self):
+        """When no date headings exist, content is appended at the end."""
+        existing = "---\ntitle: New Co\n---\n\n## People\n| Name | Role | Notes |\n"
+        new = "## 02/20/2026\n**With:** Alice\nFirst meeting"
+
+        result = Orchestrator._prepend_to_note(existing, new)
+
+        assert "## 02/20/2026" in result
+        assert result.index("## People") < result.index("## 02/20/2026")
+
+    def test_prepend_individual_note_no_people_table(self):
+        """Works correctly for individual notes without a People section."""
+        existing = "---\ntitle: Reed Yamaguchi\n---\n\n## 01/10/2026\nOld notes\n"
+        new = "## 02/20/2026\nNew notes"
+
+        result = Orchestrator._prepend_to_note(existing, new)
+
+        idx_new = result.index("## 02/20/2026")
+        idx_old = result.index("## 01/10/2026")
+        assert idx_new < idx_old
+        assert result.startswith("---\ntitle: Reed")
+
+    def test_prepend_whitespace_normalization(self):
+        """No triple blank lines appear in the output."""
+        existing = (
+            "---\ntitle: Test\n---\n\n\n\n"
+            "## 01/01/2026\nNotes\n"
+        )
+        new = "## 02/01/2026\nNew notes"
+
+        result = Orchestrator._prepend_to_note(existing, new)
+
+        assert "\n\n\n" not in result
+
+    def test_prepend_multiple_existing_dates(self):
+        """New date is inserted before all existing dates, preserving their order."""
+        existing = (
+            "---\ntitle: Multi\n---\n\n"
+            "## 01/15/2026\nMeeting B\n\n"
+            "## 12/01/2025\nMeeting A\n"
+        )
+        new = "## 02/20/2026\nMeeting C"
+
+        result = Orchestrator._prepend_to_note(existing, new)
+
+        idx_c = result.index("## 02/20/2026")
+        idx_b = result.index("## 01/15/2026")
+        idx_a = result.index("## 12/01/2025")
+        assert idx_c < idx_b < idx_a
+
+
+class TestOrchestratorExecuteToolSearch:
+    """Tests for _execute_tool search via REST API."""
+
+    @pytest.fixture
+    def orchestrator(self, mock_settings):
+        """Create orchestrator with mocked dependencies."""
+        with patch("src.agent.orchestrator.VaultIndex") as MockVaultIndex, \
+             patch("src.agent.orchestrator.AsyncOpenAI"):
+            mock_vault_index = MagicMock()
+            MockVaultIndex.return_value = mock_vault_index
+            orch = Orchestrator(mock_settings)
+            return orch
+
+    @pytest.mark.asyncio
+    async def test_search_returns_formatted_results(self, orchestrator):
+        """REST search results are formatted with filenames and context."""
+        rest_client = AsyncMock()
+        rest_client.search.return_value = [
+            {"filename": "Meetings/Curinos.md", "matches": [{"match": "Q1 targets", "context": "Discussed Q1 targets with the team"}]},
+            {"filename": "Centring/Roadmap.md", "matches": [{"match": "Q1 targets", "context": "Q1 targets include launch"}]},
+        ]
+
+        result = await orchestrator._execute_tool("search_notes", {"query": "Q1 targets"}, rest_client)
+
+        rest_client.search.assert_called_once_with("Q1 targets", context_length=100)
+        assert "Found 2 result(s):" in result
+        assert '- Meetings/Curinos.md: "Discussed Q1 targets with the team"' in result
+        assert '- Centring/Roadmap.md: "Q1 targets include launch"' in result
+
+    @pytest.mark.asyncio
+    async def test_search_no_results(self, orchestrator):
+        """Empty search returns 'No matching notes found.'"""
+        rest_client = AsyncMock()
+        rest_client.search.return_value = []
+
+        result = await orchestrator._execute_tool("search_notes", {"query": "nonexistent"}, rest_client)
+
+        assert result == "No matching notes found."
+
+    @pytest.mark.asyncio
+    async def test_search_caps_at_20_results(self, orchestrator):
+        """Only first 20 results are shown even if more are returned."""
+        rest_client = AsyncMock()
+        rest_client.search.return_value = [
+            {"filename": f"Notes/Note{i}.md", "matches": [{"match": "test", "context": f"context {i}"}]}
+            for i in range(25)
+        ]
+
+        result = await orchestrator._execute_tool("search_notes", {"query": "test"}, rest_client)
+
+        assert "Found 25 result(s):" in result
+        # Count displayed lines (each starts with "- ")
+        lines = [line for line in result.split("\n") if line.startswith("- ")]
+        assert len(lines) == 20
+
+    @pytest.mark.asyncio
+    async def test_search_result_without_matches(self, orchestrator):
+        """Result with no context snippets shows filename only."""
+        rest_client = AsyncMock()
+        rest_client.search.return_value = [
+            {"filename": "Inbox/Quick Note.md", "matches": []},
+        ]
+
+        result = await orchestrator._execute_tool("search_notes", {"query": "quick"}, rest_client)
+
+        assert "Found 1 result(s):" in result
+        assert "- Inbox/Quick Note.md" in result
+        assert '"' not in result.split("- Inbox/Quick Note.md")[1].split("\n")[0]
+
+
+class TestOrchestratorExecuteToolUpsertPrepend:
+    """Tests for _execute_tool upsert with prepend flag."""
+
+    @pytest.fixture
+    def orchestrator(self, mock_settings):
+        """Create orchestrator with mocked dependencies."""
+        with patch("src.agent.orchestrator.VaultIndex") as MockVaultIndex, \
+             patch("src.agent.orchestrator.AsyncOpenAI"):
+            mock_vault_index = MagicMock()
+            MockVaultIndex.return_value = mock_vault_index
+            orch = Orchestrator(mock_settings)
+            return orch
+
+    @pytest.mark.asyncio
+    async def test_prepend_reads_existing_before_write(self, orchestrator):
+        """Prepend mode reads the note, merges, then writes back."""
+        # Note exists at Meetings/Curinos.md
+        orchestrator._vault_index.get_note_path.return_value = Path("Meetings/Curinos.md")
+
+        rest_client = AsyncMock()
+        rest_client.read_note.return_value = (
+            "---\ntitle: Curinos\n---\n\n## 01/13/2026\n**With:** Olly\nOld notes\n"
+        )
+
+        result = await orchestrator._execute_tool(
+            "upsert_note",
+            {
+                "note_name": "Curinos",
+                "content": "## 02/20/2026\n**With:** Olly\nNew notes",
+                "folder": "Meetings",
+                "prepend": True,
+            },
+            rest_client,
+        )
+
+        # Should have read the existing note
+        rest_client.read_note.assert_called_once_with("Meetings/Curinos.md")
+        # Should have written merged content
+        rest_client.upsert_note.assert_called_once()
+        written_content = rest_client.upsert_note.call_args[0][1]
+        assert "## 02/20/2026" in written_content
+        assert "## 01/13/2026" in written_content
+        assert written_content.index("## 02/20/2026") < written_content.index("## 01/13/2026")
+        assert "Prepended" in result
+
+    @pytest.mark.asyncio
+    async def test_prepend_false_uses_existing_behavior(self, orchestrator):
+        """prepend=null follows the full-replacement path (no read_note call)."""
+        orchestrator._vault_index.get_note_path.return_value = Path("Meetings/Curinos.md")
+
+        rest_client = AsyncMock()
+
+        result = await orchestrator._execute_tool(
+            "upsert_note",
+            {
+                "note_name": "Curinos",
+                "content": "Full replacement content",
+                "folder": "Meetings",
+                "prepend": None,
+            },
+            rest_client,
+        )
+
+        rest_client.read_note.assert_not_called()
+        rest_client.upsert_note.assert_called_once()
+        assert "Updated" in result
+
+    @pytest.mark.asyncio
+    async def test_prepend_on_new_note_creates_normally(self, orchestrator):
+        """prepend=true on a non-existent note ignores the flag and creates normally."""
+        orchestrator._vault_index.get_note_path.return_value = None
+
+        rest_client = AsyncMock()
+
+        result = await orchestrator._execute_tool(
+            "upsert_note",
+            {
+                "note_name": "NewCompany",
+                "content": "## 02/20/2026\n**With:** Bob\nFirst meeting",
+                "folder": "Meetings",
+                "prepend": True,
+            },
+            rest_client,
+        )
+
+        rest_client.read_note.assert_not_called()
+        rest_client.upsert_note.assert_called_once()
+        assert "Created" in result

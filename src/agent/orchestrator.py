@@ -64,6 +64,9 @@ from src.agent.prompts import build_system_prompt
 # Characters to sanitize in note names
 INVALID_CHARS = re.compile(r'[/\\:*?"<>|]')
 
+# Matches date headings like "## 01/13/2026"
+DATE_HEADING_RE = re.compile(r"^## (\d{2}/\d{2}/\d{4})\s*$")
+
 MAX_TOOL_ITERATIONS = 8
 
 
@@ -120,6 +123,49 @@ class Orchestrator:
             return path.relative_to(self._settings.obsidian_vault_path)
         return path
 
+    @staticmethod
+    def _prepend_to_note(existing_content: str, new_content: str) -> str:
+        """Insert new content before the first date heading in existing content.
+
+        Scans for the first ``## MM/DD/YYYY`` heading and inserts ``new_content``
+        immediately before it. If no date heading is found the new content is
+        appended at the end.
+
+        Args:
+            existing_content: Current note content.
+            new_content: New section to prepend (should start with ``## MM/DD/YYYY``).
+
+        Returns:
+            Merged content with new section inserted in the correct position.
+        """
+        lines = existing_content.split("\n")
+        insert_idx: int | None = None
+
+        for i, line in enumerate(lines):
+            if DATE_HEADING_RE.match(line):
+                insert_idx = i
+                break
+
+        new_block = new_content.strip()
+
+        if insert_idx is not None:
+            # Strip trailing blank lines right before the insertion point so we
+            # don't end up with triple-newlines between sections.
+            before_end = insert_idx
+            while before_end > 0 and lines[before_end - 1].strip() == "":
+                before_end -= 1
+
+            before = "\n".join(lines[:before_end]).rstrip()
+            after = "\n".join(lines[insert_idx:])
+
+            if before:
+                return f"{before}\n\n{new_block}\n\n{after}"
+            return f"{new_block}\n\n{after}"
+
+        # No existing date headings -- append at the end
+        trimmed = existing_content.rstrip()
+        return f"{trimmed}\n\n{new_block}\n"
+
     @_llm_retry
     async def _call_llm(
         self,
@@ -171,9 +217,18 @@ class Orchestrator:
         """
         if tool_name == "search_notes":
             params = SearchNotesParams(**arguments)
-            matches = self._vault_index.search_notes(params.query)
-            if matches:
-                return f"Found {len(matches)} notes: {', '.join(matches)}"
+            results = await rest_client.search(params.query, context_length=100)
+            if results:
+                lines = []
+                for r in results[:20]:
+                    filename = r["filename"]
+                    matches = r.get("matches", [])
+                    if matches:
+                        context = matches[0]["context"].strip()
+                        lines.append(f"- {filename}: \"{context}\"")
+                    else:
+                        lines.append(f"- {filename}")
+                return f"Found {len(results)} result(s):\n" + "\n".join(lines)
             return "No matching notes found."
 
         elif tool_name == "read_note":
@@ -199,11 +254,18 @@ class Orchestrator:
             existing_path = self._vault_index.get_note_path(params.note_name)
 
             if existing_path:
-                # Note exists - replace with full content provided by LLM
                 rel_path = self._to_relative_path(existing_path)
                 api_path = rel_path.with_suffix('').as_posix()  # REST client adds .md
                 folder_name = rel_path.parent.as_posix()
 
+                if params.prepend:
+                    # Prepend mode: read existing, insert before first date heading, write back
+                    existing_content = await rest_client.read_note(rel_path.as_posix())
+                    merged = self._prepend_to_note(existing_content or "", params.content)
+                    await rest_client.upsert_note(api_path, merged)
+                    return f"Prepended new section to '{params.note_name}' in {folder_name}/"
+
+                # Full replacement mode
                 await rest_client.upsert_note(api_path, params.content)
                 return f"Updated note '{params.note_name}' in {folder_name}/"
 

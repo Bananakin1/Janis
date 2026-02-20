@@ -26,6 +26,10 @@ class UpsertNoteParams(BaseModel):
         default=None,
         description="Target folder for the note (e.g., 'Meetings', 'People')",
     )
+    prepend: Optional[bool] = Field(
+        default=None,
+        description="If true, insert content before existing date sections instead of replacing the entire note.",
+    )
 
 
 class AskClarificationParams(BaseModel):
@@ -50,7 +54,7 @@ def get_tool_definitions() -> list[dict]:
         {
             "type": "function",
             "name": "search_notes",
-            "description": "Search for notes in the vault by name. Use this to find existing notes before creating wikilinks or to check if a note already exists.",
+            "description": "Search for notes in the vault by name or content. Returns matching filenames with context snippets. Use this to find notes before reading or updating them.",
             "strict": True,
             "parameters": {
                 "type": "object",
@@ -84,7 +88,7 @@ def get_tool_definitions() -> list[dict]:
         {
             "type": "function",
             "name": "upsert_note",
-            "description": "Create a new note or replace an existing one. When updating, always read_note first, then provide the complete note content with your changes merged in. Always include proper YAML frontmatter with title, type, tags, created date, and related links.",
+            "description": "Create a new note or replace an existing one. Two modes: (1) prepend=null: full replacement -- read_note first, merge changes, provide complete content with frontmatter. (2) prepend=true: insert a new date section -- provide ONLY the new ## MM/DD/YYYY block; the system inserts it before existing dates automatically.",
             "strict": True,
             "parameters": {
                 "type": "object",
@@ -95,14 +99,18 @@ def get_tool_definitions() -> list[dict]:
                     },
                     "content": {
                         "type": "string",
-                        "description": "Full markdown content including frontmatter",
+                        "description": "Full markdown content including frontmatter (prepend=null), or just the new date section (prepend=true)",
                     },
                     "folder": {
                         "type": ["string", "null"],
                         "description": "Target folder for new notes: Meetings, Centring, or Records. Use null to use default folder.",
                     },
+                    "prepend": {
+                        "type": ["boolean", "null"],
+                        "description": "If true, insert content before existing date sections instead of replacing the entire note. Use null for full replacement.",
+                    },
                 },
-                "required": ["note_name", "content", "folder"],
+                "required": ["note_name", "content", "folder", "prepend"],
                 "additionalProperties": False,
             },
         },

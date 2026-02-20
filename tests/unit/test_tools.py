@@ -68,6 +68,34 @@ class TestUpsertNoteParams:
         assert params.note_name == "Test Note"
         assert params.folder is None
 
+    def test_valid_params_with_prepend_true(self):
+        """Test valid params with prepend=True."""
+        params = UpsertNoteParams(
+            note_name="Curinos",
+            content="## 02/20/2026\n**With:** Olly\nDiscussed Q1.",
+            folder="Meetings",
+            prepend=True,
+        )
+        assert params.prepend is True
+
+    def test_valid_params_with_prepend_null(self):
+        """Test valid params with prepend=None (explicit)."""
+        params = UpsertNoteParams(
+            note_name="Curinos",
+            content="Full content here",
+            folder="Meetings",
+            prepend=None,
+        )
+        assert params.prepend is None
+
+    def test_valid_params_without_prepend(self):
+        """Test that prepend defaults to None when omitted."""
+        params = UpsertNoteParams(
+            note_name="Test Note",
+            content="Content",
+        )
+        assert params.prepend is None
+
     def test_missing_required_raises(self):
         """Test that missing required fields raises error."""
         with pytest.raises(ValidationError):
@@ -164,6 +192,16 @@ class TestGetToolDefinitions:
         # Verify strict mode settings
         assert upsert_tool.get("strict") is True
         assert params.get("additionalProperties") is False
+
+    def test_upsert_note_has_prepend_property(self):
+        """Test that upsert_note schema includes prepend in properties and required."""
+        definitions = get_tool_definitions()
+        upsert_tool = next(t for t in definitions if t["name"] == "upsert_note")
+
+        params = upsert_tool["parameters"]
+        assert "prepend" in params["properties"]
+        assert params["properties"]["prepend"]["type"] == ["boolean", "null"]
+        assert "prepend" in params["required"]
 
     def test_ask_clarification_schema(self):
         """Test ask_clarification tool schema."""

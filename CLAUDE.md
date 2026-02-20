@@ -107,8 +107,8 @@ This project runs natively on Windows PowerShell (no WSL required).
 
 **Platform-specific code:**
 - `src/main.py:41` - SIGTERM handler skipped on Windows (only SIGINT/Ctrl+C)
-- `src/agent/orchestrator.py:165,183` - Uses `Path.as_posix()` for REST API paths
-- `src/agent/orchestrator.py:91` - `_to_relative_path()` normalizes paths from obsidiantools
+- `src/agent/orchestrator.py` - Uses `Path.as_posix()` for REST API paths
+- `src/agent/orchestrator.py` - `_to_relative_path()` normalizes paths from obsidiantools
 
 **Path handling:** Always use `pathlib.Path`. For REST API URLs, convert with `.as_posix()` to ensure forward slashes.
 
@@ -158,6 +158,24 @@ api_path = rel_path.as_posix()  # Always forward slashes
 - All tools use `strict: true` for reliable schema adherence
 - `additionalProperties: false` on all parameter objects
 - `parallel_tool_calls: false` (required for strict mode)
+
+## Meeting Note Convention
+
+Notes in `Meetings/` follow a **company-keyed** structure for client/prospect meetings and **person-keyed** for individual contacts.
+
+**Company notes** (e.g., `ITK.md`, `Curinos.md`):
+- People table at the top with Name, Role, Notes columns
+- Meetings in reverse chronological order
+- Each meeting entry has `**With:** [attendees]` line
+- One note per company -- all meetings with anyone from that company go here
+
+**Individual notes** (e.g., `Reed Yamaguchi.md`, `Anthony Saetsugu.md`):
+- Used for advisors, solo practitioners, legal contacts
+- Standard date sections without People table
+
+**Tagging:** Tags come from the vault's `Tag Registry` note. The system prompt instructs the LLM to `read_note('Tag Registry')` before creating notes, so tag values stay in sync without hardcoding.
+
+The system prompt in `src/agent/prompts.py` encodes these conventions.
 
 ## Gotchas
 
