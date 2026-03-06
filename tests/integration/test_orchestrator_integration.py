@@ -1,161 +1,150 @@
-"""Integration tests for Orchestrator."""
+"""Integration tests for the refactored orchestrator."""
 
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
-from src.agent.orchestrator import Orchestrator, INVALID_CHARS
-from src.config.settings import Settings
+from src.adapters.base import AgentRequest
+from src.agent.orchestrator import Orchestrator
+from src.agent.providers.base import ProviderResponse, ToolCall
+from src.backend.vault_index import VaultIndex
+from src.tools.base import ToolContext, ToolDefinition, ToolResult
+from src.tools.registry import ToolRegistry
+
+
+class FakeRestClient:
+    def __init__(self, *_args, **_kwargs):
+        self.upserts = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+    async def health_check(self):
+        return True
+
+    async def read_note(self, path: str):
+        if path == "Vault Conventions.md":
+            return "Keep meeting notes in 05 Meetings."
+        if path == "Tag Registry.md":
+            return "#meeting\n#spec"
+        return None
+
+    async def upsert_note(self, path: str, content: str):
+        self.upserts.append((path, content))
+        return True
+
+
+class FakeProvider:
+    def __init__(self, responses):
+        self.responses = list(responses)
+
+    async def generate(self, input_items, *, tools=None):
+        return self.responses.pop(0)
+
+    async def summarize(self, conversation_text: str) -> str:
+        return "summary"
+
+
+class WriteParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(...)
+    content: str = Field(...)
+
+
+async def _write_tool(params: WriteParams, ctx: ToolContext) -> ToolResult:
+    await ctx.rest.upsert_note(params.path, params.content)
+    return ToolResult(content=f"Wrote {params.path}")
 
 
 @pytest.fixture
-def mock_settings(temp_vault):
-    """Create mock settings with temp vault."""
-    settings = MagicMock(spec=Settings)
-    settings.obsidian_vault_path = temp_vault
-    settings.obsidian_api_url = "https://127.0.0.1:27124"
-    settings.obsidian_api_key = "test-key"
-    settings.azure_openai_endpoint = "https://test.openai.azure.com"
-    settings.azure_openai_api_key = "test-azure-key"
-    settings.azure_openai_deployment = "gpt-4o"
-    settings.default_note_folder = "Inbox"
-    settings.reasoning_effort = "medium"
-    return settings
+def settings(temp_vault, tmp_path):
+    return SimpleNamespace(
+        obsidian_vault_path=temp_vault,
+        obsidian_api_url="https://127.0.0.1:27124",
+        obsidian_api_key="test-key",
+        azure_openai_endpoint="https://test.openai.azure.com",
+        azure_openai_api_key="test-key",
+        azure_openai_deployment="gpt-4o",
+        llm_provider="azure_openai",
+        obsidian_cli_command="obsidian",
+        default_note_folder="Inbox",
+        reasoning_effort="medium",
+        memory_db_path=tmp_path / "memory.db",
+        memory_summary_interval=10,
+        max_tool_iterations=4,
+        prompt_cache_ttl_seconds=60,
+        vault_conventions_note_path="Vault Conventions",
+        tag_registry_note_path="Tag Registry",
+    )
 
 
-class TestOrchestratorHealthCheck:
-    """Integration tests for orchestrator health check."""
+@pytest.mark.asyncio
+async def test_orchestrator_persists_memory_across_messages(settings):
+    provider = FakeProvider(
+        [
+            ProviderResponse(text="Read Curinos"),
+            ProviderResponse(text="Using the same note"),
+        ]
+    )
+    orchestrator = Orchestrator(
+        settings,
+        provider=provider,
+        rest_client_cls=FakeRestClient,
+        vault_index=VaultIndex(settings.obsidian_vault_path),
+    )
 
-    @pytest.mark.asyncio
-    async def test_check_health_returns_healthy(self, mock_settings):
-        """Test check_health returns True when services are up."""
-        with patch("src.agent.orchestrator.AsyncOpenAI"), \
-             patch("src.agent.orchestrator.VaultIndex"), \
-             patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
+    await orchestrator.process_request(AgentRequest(user_id="u1", user_name="User", message="Read Curinos"))
+    await orchestrator.process_request(AgentRequest(user_id="u1", user_name="User", message="Add to that note"))
 
-            mock_client = AsyncMock()
-            mock_client.health_check.return_value = True
-            mock_client.__aenter__.return_value = mock_client
-            mock_client.__aexit__.return_value = None
-            MockClient.return_value = mock_client
-
-            orchestrator = Orchestrator(mock_settings)
-            is_healthy, error = await orchestrator.check_health()
-
-            assert is_healthy is True
-            assert error is None
-
-    @pytest.mark.asyncio
-    async def test_check_health_returns_unhealthy(self, mock_settings):
-        """Test check_health returns False with error message when down."""
-        with patch("src.agent.orchestrator.AsyncOpenAI"), \
-             patch("src.agent.orchestrator.VaultIndex"), \
-             patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
-
-            mock_client = AsyncMock()
-            mock_client.health_check.return_value = False
-            mock_client.__aenter__.return_value = mock_client
-            mock_client.__aexit__.return_value = None
-            MockClient.return_value = mock_client
-
-            orchestrator = Orchestrator(mock_settings)
-            is_healthy, error = await orchestrator.check_health()
-
-            assert is_healthy is False
-            assert error is not None
-            assert "not available" in error
+    messages = orchestrator._memory.get_recent_messages("u1")
+    assert len(messages) == 4
+    assert messages[0].content == "Read Curinos"
+    assert messages[2].content == "Add to that note"
 
 
-class TestOrchestratorSanitization:
-    """Tests for note name sanitization."""
+@pytest.mark.asyncio
+async def test_orchestrator_executes_registry_tool(settings):
+    registry = ToolRegistry(
+        [
+            ToolDefinition(
+                name="write_tool",
+                description="Writes a note.",
+                params_model=WriteParams,
+                execute=_write_tool,
+            )
+        ]
+    )
+    provider = FakeProvider(
+        [
+            ProviderResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(
+                        call_id="1",
+                        name="write_tool",
+                        arguments=json.dumps({"path": "Inbox/Test.md", "content": "hello"}),
+                    )
+                ],
+                raw_output_items=[],
+            ),
+            ProviderResponse(text="done"),
+        ]
+    )
+    orchestrator = Orchestrator(
+        settings,
+        provider=provider,
+        registry=registry,
+        rest_client_cls=FakeRestClient,
+        vault_index=VaultIndex(settings.obsidian_vault_path),
+    )
 
-    @pytest.fixture
-    def orchestrator(self, mock_settings):
-        """Create orchestrator with mocked dependencies."""
-        with patch("src.agent.orchestrator.VaultIndex"), \
-             patch("src.agent.orchestrator.AsyncOpenAI"):
-            return Orchestrator(mock_settings)
+    result = await orchestrator.process_request(
+        AgentRequest(user_id="u1", user_name="User", message="write")
+    )
 
-    def test_sanitize_replaces_invalid_chars(self, orchestrator):
-        """Test that invalid characters are replaced."""
-        assert "/" not in orchestrator._sanitize_note_name("foo/bar")
-        assert ":" not in orchestrator._sanitize_note_name("Meeting: 2024")
-        assert "?" not in orchestrator._sanitize_note_name("What?")
-        assert "*" not in orchestrator._sanitize_note_name("Test*File")
-
-    def test_sanitize_preserves_valid_chars(self, orchestrator):
-        """Test that valid characters are preserved."""
-        result = orchestrator._sanitize_note_name("Valid Note-Name_v2")
-        assert result == "Valid Note-Name_v2"
-
-
-class TestOrchestratorObsidianOffline:
-    """Tests for Obsidian offline handling."""
-
-    @pytest.mark.asyncio
-    async def test_returns_error_when_obsidian_offline(self, mock_settings):
-        """Test orchestrator returns error when Obsidian is offline."""
-        with patch("src.agent.orchestrator.AsyncOpenAI"), \
-             patch("src.agent.orchestrator.VaultIndex") as MockVaultIndex, \
-             patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
-
-            # Mock vault index
-            mock_vault_index = MagicMock()
-            mock_vault_index.get_vault_summary.return_value = {
-                "total_notes": 0, "folders": [], "recent_notes": []
-            }
-            mock_vault_index.get_hub_notes.return_value = []
-            MockVaultIndex.return_value = mock_vault_index
-
-            # Mock REST client - offline
-            mock_client = AsyncMock()
-            mock_client.health_check.return_value = False
-            mock_client.__aenter__.return_value = mock_client
-            mock_client.__aexit__.return_value = None
-            MockClient.return_value = mock_client
-
-            orchestrator = Orchestrator(mock_settings)
-            result = await orchestrator.process_message("Create a note")
-
-            assert "Obsidian is not running" in result
-
-
-class TestOrchestratorDirectResponse:
-    """Tests for direct LLM responses without tool calls."""
-
-    @pytest.mark.asyncio
-    async def test_returns_llm_response_without_tools(self, mock_settings):
-        """Test orchestrator returns LLM response when no tools needed."""
-        with patch("src.agent.orchestrator.AsyncOpenAI") as MockLLM, \
-             patch("src.agent.orchestrator.VaultIndex") as MockVaultIndex, \
-             patch("src.agent.orchestrator.ObsidianRESTClient") as MockClient:
-
-            # Mock vault index
-            mock_vault_index = MagicMock()
-            mock_vault_index.get_vault_summary.return_value = {
-                "total_notes": 5, "folders": ["Inbox"], "recent_notes": []
-            }
-            mock_vault_index.get_hub_notes.return_value = []
-            MockVaultIndex.return_value = mock_vault_index
-
-            # Mock REST client - online
-            mock_client = AsyncMock()
-            mock_client.health_check.return_value = True
-            mock_client.__aenter__.return_value = mock_client
-            mock_client.__aexit__.return_value = None
-            MockClient.return_value = mock_client
-
-            # Mock LLM - Responses API format (no tool calls)
-            mock_llm = MagicMock()
-            mock_response = MagicMock()
-            mock_response.output = []  # No function calls
-            mock_response.output_text = "Hello! How can I help?"
-            mock_llm.responses.create = AsyncMock(return_value=mock_response)
-            MockLLM.return_value = mock_llm
-
-            orchestrator = Orchestrator(mock_settings)
-            result = await orchestrator.process_message("Hello")
-
-            assert result == "Hello! How can I help?"
+    assert result.text == "done"

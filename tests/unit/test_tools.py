@@ -1,218 +1,94 @@
-"""Unit tests for agent tools module."""
+"""Unit tests for the tool registry and core tool contracts."""
+
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 
-from src.agent.tools import (
-    SearchNotesParams,
-    ReadNoteParams,
-    UpsertNoteParams,
-    AskClarificationParams,
-    get_tool_definitions,
-)
+from src.adapters.base import AgentRequest
+from src.backend.vault_index import VaultIndex
+from src.tools.base import ToolContext
+from src.tools.registry import ToolRegistry
 
 
-class TestSearchNotesParams:
-    """Tests for SearchNotesParams model."""
+class DummyREST:
+    async def read_note(self, path: str):
+        return f"content for {path}"
 
-    def test_valid_query(self):
-        """Test valid search query."""
-        params = SearchNotesParams(query="meeting notes")
-        assert params.query == "meeting notes"
-
-    def test_empty_query_allowed(self):
-        """Test that empty string is allowed."""
-        params = SearchNotesParams(query="")
-        assert params.query == ""
-
-    def test_missing_query_raises(self):
-        """Test that missing query raises validation error."""
-        with pytest.raises(ValidationError):
-            SearchNotesParams()
+    async def search_simple(self, query: str, context_length: int = 100):
+        return [{"filename": "Agent.md", "matches": [{"context": "agent context"}]}]
 
 
-class TestReadNoteParams:
-    """Tests for ReadNoteParams model."""
-
-    def test_valid_note_name(self):
-        """Test valid note name."""
-        params = ReadNoteParams(note_name="My Note")
-        assert params.note_name == "My Note"
-
-    def test_missing_note_name_raises(self):
-        """Test that missing note_name raises validation error."""
-        with pytest.raises(ValidationError):
-            ReadNoteParams()
+@pytest.fixture
+def registry() -> ToolRegistry:
+    return ToolRegistry.discover()
 
 
-class TestUpsertNoteParams:
-    """Tests for UpsertNoteParams model."""
+@pytest.fixture
+def ctx(tmp_path) -> ToolContext:
+    vault_path = tmp_path / "vault"
+    vault_path.mkdir()
+    (vault_path / "Agent.md").write_text("# Agent\n")
+    index = VaultIndex(vault_path)
+    index.refresh()
+    settings = SimpleNamespace(default_note_folder="Inbox")
+    return ToolContext(
+        settings=settings,
+        rest=DummyREST(),
+        cli=None,
+        vault_index=index,
+        request=AgentRequest(user_id="u1", user_name="User", message="hello"),
+        memory=None,
+    )
 
-    def test_valid_params_with_folder(self):
-        """Test valid params with folder."""
-        params = UpsertNoteParams(
-            note_name="Test Note",
-            content="# Test\n\nContent here.",
-            folder="Meetings",
+
+class TestRegistryDiscovery:
+    def test_discovers_expected_tools(self, registry: ToolRegistry):
+        names = set(registry.names())
+        assert {"search_notes", "read_note", "upsert_note", "ask_clarification"} <= names
+        assert "delete_note" in names
+        assert "set_property" in names
+
+    def test_schemas_use_responses_api_shape(self, registry: ToolRegistry):
+        schemas = registry.get_schemas()
+        search = next(schema for schema in schemas if schema["name"] == "search_notes")
+        assert search["type"] == "function"
+        assert search["strict"] is True
+        assert "parameters" in search
+        assert search["parameters"]["type"] == "object"
+
+    def test_cli_tools_hidden_without_context(self, registry: ToolRegistry):
+        schemas = registry.get_schemas()
+        names = {schema["name"] for schema in schemas}
+        assert "move_note" not in names
+        assert "set_property" not in names
+
+
+class TestRegistryExecution:
+    @pytest.mark.asyncio
+    async def test_executes_search_tool(self, registry: ToolRegistry, ctx: ToolContext):
+        result = await registry.execute("search_notes", {"query": "agent"}, ctx)
+        assert "Agent.md" in result.content
+
+    @pytest.mark.asyncio
+    async def test_clarification_tool_stops_loop(self, registry: ToolRegistry, ctx: ToolContext):
+        result = await registry.execute(
+            "ask_clarification",
+            {
+                "ambiguous_term": "agent",
+                "matches": ["Agent.md", "SPEC-agent-planner.md"],
+                "question": "Which agent note did you mean?",
+            },
+            ctx,
         )
-        assert params.note_name == "Test Note"
-        assert params.content == "# Test\n\nContent here."
-        assert params.folder == "Meetings"
+        assert result.stop is True
+        assert result.response is not None
+        assert result.response.action is not None
+        assert len(result.response.action.options) == 2
 
-    def test_valid_params_without_folder(self):
-        """Test valid params without folder (optional)."""
-        params = UpsertNoteParams(
-            note_name="Test Note",
-            content="Content",
-        )
-        assert params.note_name == "Test Note"
-        assert params.folder is None
-
-    def test_valid_params_with_prepend_true(self):
-        """Test valid params with prepend=True."""
-        params = UpsertNoteParams(
-            note_name="Curinos",
-            content="## 02/20/2026\n**With:** Olly\nDiscussed Q1.",
-            folder="Meetings",
-            prepend=True,
-        )
-        assert params.prepend is True
-
-    def test_valid_params_with_prepend_null(self):
-        """Test valid params with prepend=None (explicit)."""
-        params = UpsertNoteParams(
-            note_name="Curinos",
-            content="Full content here",
-            folder="Meetings",
-            prepend=None,
-        )
-        assert params.prepend is None
-
-    def test_valid_params_without_prepend(self):
-        """Test that prepend defaults to None when omitted."""
-        params = UpsertNoteParams(
-            note_name="Test Note",
-            content="Content",
-        )
-        assert params.prepend is None
-
-    def test_missing_required_raises(self):
-        """Test that missing required fields raises error."""
-        with pytest.raises(ValidationError):
-            UpsertNoteParams(note_name="Test")
-
-        with pytest.raises(ValidationError):
-            UpsertNoteParams(content="Content")
-
-
-class TestAskClarificationParams:
-    """Tests for AskClarificationParams model."""
-
-    def test_valid_params(self):
-        """Test valid clarification params."""
-        params = AskClarificationParams(
-            ambiguous_term="Sarah",
-            matches=["Sarah Chen", "Sarah Miller"],
-            question="Which Sarah did you mean?",
-        )
-        assert params.ambiguous_term == "Sarah"
-        assert params.matches == ["Sarah Chen", "Sarah Miller"]
-        assert params.question == "Which Sarah did you mean?"
-
-    def test_missing_required_raises(self):
-        """Test that missing required fields raises error."""
-        with pytest.raises(ValidationError):
-            AskClarificationParams(ambiguous_term="Sarah")
-
-        with pytest.raises(ValidationError):
-            AskClarificationParams(
-                ambiguous_term="Sarah",
-                matches=["Sarah Chen"],
-            )
-
-
-class TestGetToolDefinitions:
-    """Tests for get_tool_definitions function."""
-
-    def test_returns_list(self):
-        """Test that function returns a list."""
-        definitions = get_tool_definitions()
-        assert isinstance(definitions, list)
-
-    def test_has_four_tools(self):
-        """Test that there are exactly 4 tools defined."""
-        definitions = get_tool_definitions()
-        assert len(definitions) == 4
-
-    def test_tool_structure(self):
-        """Test that each tool has correct Responses API structure (flat, not nested)."""
-        definitions = get_tool_definitions()
-
-        for tool in definitions:
-            assert "type" in tool
-            assert tool["type"] == "function"
-            # Responses API uses flat structure - name/description at top level
-            assert "name" in tool
-            assert "description" in tool
-            assert "parameters" in tool
-            # Should NOT have nested "function" key (that's Chat Completions format)
-            assert "function" not in tool
-
-    def test_tool_names(self):
-        """Test that all expected tools are defined."""
-        definitions = get_tool_definitions()
-        names = {tool["name"] for tool in definitions}
-
-        assert names == {"search_notes", "read_note", "upsert_note", "ask_clarification"}
-
-    def test_search_notes_schema(self):
-        """Test search_notes tool schema."""
-        definitions = get_tool_definitions()
-        search_tool = next(t for t in definitions if t["name"] == "search_notes")
-
-        params = search_tool["parameters"]
-        assert params["type"] == "object"
-        assert "query" in params["properties"]
-        assert "query" in params["required"]
-
-    def test_upsert_note_schema(self):
-        """Test upsert_note tool schema."""
-        definitions = get_tool_definitions()
-        upsert_tool = next(t for t in definitions if t["name"] == "upsert_note")
-
-        params = upsert_tool["parameters"]
-        assert "note_name" in params["properties"]
-        assert "content" in params["properties"]
-        assert "folder" in params["properties"]
-        assert "note_name" in params["required"]
-        assert "content" in params["required"]
-        # folder is required but nullable (strict mode requires all fields in required)
-        assert "folder" in params["required"]
-        assert params["properties"]["folder"]["type"] == ["string", "null"]
-        # Verify strict mode settings
-        assert upsert_tool.get("strict") is True
-        assert params.get("additionalProperties") is False
-
-    def test_upsert_note_has_prepend_property(self):
-        """Test that upsert_note schema includes prepend in properties and required."""
-        definitions = get_tool_definitions()
-        upsert_tool = next(t for t in definitions if t["name"] == "upsert_note")
-
-        params = upsert_tool["parameters"]
-        assert "prepend" in params["properties"]
-        assert params["properties"]["prepend"]["type"] == ["boolean", "null"]
-        assert "prepend" in params["required"]
-
-    def test_ask_clarification_schema(self):
-        """Test ask_clarification tool schema."""
-        definitions = get_tool_definitions()
-        clarify_tool = next(t for t in definitions if t["name"] == "ask_clarification")
-
-        params = clarify_tool["parameters"]
-        assert "ambiguous_term" in params["properties"]
-        assert "matches" in params["properties"]
-        assert "question" in params["properties"]
-        assert params["properties"]["matches"]["type"] == "array"
-        assert "ambiguous_term" in params["required"]
-        assert "matches" in params["required"]
-        assert "question" in params["required"]
+    @pytest.mark.asyncio
+    async def test_delete_tool_requires_confirmation(self, registry: ToolRegistry, ctx: ToolContext):
+        result = await registry.execute("delete_note", {"path": "Agent.md"}, ctx)
+        assert result.stop is True
+        assert result.response is not None
+        assert result.response.action is not None

@@ -1,194 +1,223 @@
-"""Unit tests for REST client module."""
+"""Unit tests for the expanded Obsidian REST client."""
 
-import pytest
 import httpx
+import pytest
 from pytest_httpx import HTTPXMock
 
-from src.obsidian.rest_client import ObsidianRESTClient
+from src.backend.rest_client import ObsidianRESTClient, ValidationFailure
 
 
 @pytest.fixture
-def rest_client():
-    """Create a REST client for testing."""
-    return ObsidianRESTClient(
-        base_url="https://127.0.0.1:27124",
-        api_key="test-api-key",
-    )
+def rest_client() -> ObsidianRESTClient:
+    return ObsidianRESTClient("https://127.0.0.1:27124", "test-api-key")
 
 
-class TestObsidianRESTClientInit:
-    """Tests for ObsidianRESTClient initialization."""
-
-    def test_init_stores_base_url(self):
-        """Test that base_url is stored correctly."""
-        client = ObsidianRESTClient("https://localhost:27124", "key")
-        assert client._base_url == "https://localhost:27124"
-
-    def test_init_strips_trailing_slash(self):
-        """Test that trailing slash is stripped from base_url."""
-        client = ObsidianRESTClient("https://localhost:27124/", "key")
-        assert client._base_url == "https://localhost:27124"
-
-    def test_init_stores_api_key(self):
-        """Test that api_key is stored correctly."""
-        client = ObsidianRESTClient("https://localhost:27124", "my-key")
-        assert client._api_key == "my-key"
-
-
-class TestObsidianRESTClientContextManager:
-    """Tests for async context manager."""
-
+class TestContextManager:
     @pytest.mark.asyncio
-    async def test_context_manager_creates_client(self, rest_client):
-        """Test that context manager creates httpx client."""
+    async def test_creates_and_closes_client(self, rest_client):
         async with rest_client as client:
-            assert client._client is not None
-            assert isinstance(client._client, httpx.AsyncClient)
-
-    @pytest.mark.asyncio
-    async def test_context_manager_closes_client(self, rest_client):
-        """Test that context manager closes httpx client on exit."""
-        async with rest_client:
-            pass
+            assert client.client is not None
         assert rest_client._client is None
 
+
+class TestReadAndWriteMethods:
     @pytest.mark.asyncio
-    async def test_client_property_outside_context_raises(self, rest_client):
-        """Test that accessing client outside context raises error."""
-        with pytest.raises(RuntimeError, match="not initialized"):
-            _ = rest_client.client
+    async def test_read_note_adds_markdown_extension(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(url="https://127.0.0.1:27124/vault/Test.md", text="content")
 
+        async with rest_client as client:
+            content = await client.read_note("Test")
 
-class TestObsidianRESTClientReadNote:
-    """Tests for read_note method."""
+        assert content == "content"
+        assert httpx_mock.get_request().url.path == "/vault/Test.md"
 
     @pytest.mark.asyncio
-    async def test_read_note_success(self, rest_client, httpx_mock: HTTPXMock):
-        """Test successful note read."""
+    async def test_append_note_posts_markdown_body(self, rest_client, httpx_mock: HTTPXMock):
         httpx_mock.add_response(
+            method="POST",
             url="https://127.0.0.1:27124/vault/Inbox/Test.md",
-            text="# Test Note\n\nContent here.",
+            status_code=204,
         )
 
         async with rest_client as client:
-            content = await client.read_note("Inbox/Test")
-            assert content == "# Test Note\n\nContent here."
-
-    @pytest.mark.asyncio
-    async def test_read_note_adds_md_extension(self, rest_client, httpx_mock: HTTPXMock):
-        """Test that .md extension is added if missing."""
-        httpx_mock.add_response(
-            url="https://127.0.0.1:27124/vault/Test.md",
-            text="Content",
-        )
-
-        async with rest_client as client:
-            await client.read_note("Test")
+            assert await client.append_note("Inbox/Test", "new block") is True
 
         request = httpx_mock.get_request()
-        assert request.url.path == "/vault/Test.md"
+        assert request.method == "POST"
+        assert request.content == b"new block"
+        assert request.headers["Content-Type"] == "text/markdown"
 
     @pytest.mark.asyncio
-    async def test_read_note_not_found(self, rest_client, httpx_mock: HTTPXMock):
-        """Test read_note returns None for 404."""
+    async def test_patch_note_sends_target_headers(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(method="PATCH", status_code=200)
+
+        async with rest_client as client:
+            assert await client.patch_note(
+                "Inbox/Test", "patched",
+                target="## Current", target_type="heading", operation="replace",
+            ) is True
+
+        request = httpx_mock.get_request()
+        assert request.method == "PATCH"
+        assert request.headers["Target-Type"] == "heading"
+        assert request.headers["Target"] == "## Current"
+        assert request.headers["Operation"] == "replace"
+
+    @pytest.mark.asyncio
+    async def test_delete_note_returns_false_for_404(self, rest_client, httpx_mock: HTTPXMock):
         httpx_mock.add_response(
+            method="DELETE",
             url="https://127.0.0.1:27124/vault/Missing.md",
             status_code=404,
         )
 
         async with rest_client as client:
-            content = await client.read_note("Missing")
-            assert content is None
-
-
-class TestObsidianRESTClientUpsertNote:
-    """Tests for upsert_note method."""
+            assert await client.delete_note("Missing") is False
 
     @pytest.mark.asyncio
-    async def test_upsert_note_success(self, rest_client, httpx_mock: HTTPXMock):
-        """Test successful note upsert."""
-        httpx_mock.add_response(
-            url="https://127.0.0.1:27124/vault/Inbox/New.md",
-            method="PUT",
-            status_code=200,
-        )
-
-        async with rest_client as client:
-            result = await client.upsert_note("Inbox/New", "# Content")
-            assert result is True
-
-    @pytest.mark.asyncio
-    async def test_upsert_note_adds_md_extension(self, rest_client, httpx_mock: HTTPXMock):
-        """Test that .md extension is added if missing."""
-        httpx_mock.add_response(
-            url="https://127.0.0.1:27124/vault/Test.md",
-            method="PUT",
-            status_code=200,
-        )
-
-        async with rest_client as client:
-            await client.upsert_note("Test", "Content")
-
-        request = httpx_mock.get_request()
-        assert request.url.path == "/vault/Test.md"
-
-    @pytest.mark.asyncio
-    async def test_upsert_note_sends_content(self, rest_client, httpx_mock: HTTPXMock):
-        """Test that content is sent in request body."""
-        httpx_mock.add_response(
-            url="https://127.0.0.1:27124/vault/Test.md",
-            method="PUT",
-            status_code=200,
-        )
-
-        async with rest_client as client:
-            await client.upsert_note("Test", "# My Content\n\nBody here.")
-
-        request = httpx_mock.get_request()
-        assert request.content == b"# My Content\n\nBody here."
-
-
-class TestObsidianRESTClientSearch:
-    """Tests for search method."""
-
-    @pytest.mark.asyncio
-    async def test_search_success(self, rest_client, httpx_mock: HTTPXMock):
-        """Test successful search."""
+    async def test_open_note_posts_to_open_endpoint(self, rest_client, httpx_mock: HTTPXMock):
         httpx_mock.add_response(
             method="POST",
-            json=[{"filename": "Note1.md"}, {"filename": "Note2.md"}],
+            url="https://127.0.0.1:27124/open/Inbox/Test.md",
+            status_code=204,
         )
 
         async with rest_client as client:
-            results = await client.search("test query")
-            assert len(results) == 2
+            assert await client.open_note("Inbox/Test") is True
+
+        assert httpx_mock.get_request().url.path == "/open/Inbox/Test.md"
+
+
+class TestVaultListingAndDaily:
+    @pytest.mark.asyncio
+    async def test_list_vault_root(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(
+            method="GET",
+            url="https://127.0.0.1:27124/vault/",
+            json=["04 Business", "05 Meetings"],
+        )
+
+        async with rest_client as client:
+            result = await client.list_vault()
+
+        assert result == ["04 Business", "05 Meetings"]
+
+    @pytest.mark.asyncio
+    async def test_list_vault_subdirectory(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(method="GET", status_code=200, json=["ITK.md", "Curinos.md"])
+
+        async with rest_client as client:
+            result = await client.list_vault("05 Meetings")
+
+        assert result == ["ITK.md", "Curinos.md"]
+        assert "05%20Meetings" in str(httpx_mock.get_request().url)
+
+    @pytest.mark.asyncio
+    async def test_read_daily_returns_none_for_404(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(
+            method="GET",
+            url="https://127.0.0.1:27124/periodic/daily/",
+            status_code=404,
+        )
+
+        async with rest_client as client:
+            assert await client.read_daily() is None
+
+    @pytest.mark.asyncio
+    async def test_append_daily_posts_markdown_body(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://127.0.0.1:27124/periodic/daily/",
+            status_code=204,
+        )
+
+        async with rest_client as client:
+            assert await client.append_daily("- follow up") is True
 
         request = httpx_mock.get_request()
+        assert request.method == "POST"
+        assert request.content == b"- follow up"
+
+
+class TestSearchAndCommands:
+    @pytest.mark.asyncio
+    async def test_search_simple_uses_query_params(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(method="POST", json=[{"filename": "Note.md"}], status_code=200)
+
+        async with rest_client as client:
+            result = await client.search_simple("Note", context_length=50)
+
+        assert result == [{"filename": "Note.md"}]
+        request = httpx_mock.get_request()
         assert request.url.path == "/search/simple/"
-        assert "query=test+query" in str(request.url)
-        assert "contextLength=100" in str(request.url)
-
-
-class TestObsidianRESTClientHealthCheck:
-    """Tests for health_check method."""
+        assert "query=Note" in str(request.url)
+        assert "contextLength=50" in str(request.url)
 
     @pytest.mark.asyncio
-    async def test_health_check_success(self, rest_client, httpx_mock: HTTPXMock):
-        """Test health check returns True when API is available."""
+    async def test_search_alias_calls_simple_search(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(method="POST", json=[], status_code=200)
+
+        async with rest_client as client:
+            assert await client.search("foo") == []
+
+    @pytest.mark.asyncio
+    async def test_search_dql_returns_json_when_available(self, rest_client, httpx_mock: HTTPXMock):
         httpx_mock.add_response(
-            url="https://127.0.0.1:27124/",
-            status_code=200,
+            method="POST",
+            url="https://127.0.0.1:27124/search/",
+            json=[{"path": "02 Specs/Test.md", "status": "in-progress"}],
+            headers={"content-type": "application/json"},
         )
 
         async with rest_client as client:
-            result = await client.health_check()
-            assert result is True
+            result = await client.search_dql('TABLE status FROM "02 Specs"')
+
+        assert result == [{"path": "02 Specs/Test.md", "status": "in-progress"}]
 
     @pytest.mark.asyncio
-    async def test_health_check_failure(self, rest_client, httpx_mock: HTTPXMock):
-        """Test health check returns False on connection error."""
+    async def test_list_commands_returns_payload(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(
+            method="GET",
+            url="https://127.0.0.1:27124/commands/",
+            json=[{"id": "workspace:new-tab"}],
+        )
+
+        async with rest_client as client:
+            result = await client.list_commands()
+
+        assert result == [{"id": "workspace:new-tab"}]
+
+    @pytest.mark.asyncio
+    async def test_execute_command_returns_text_when_not_json(self, rest_client, httpx_mock: HTTPXMock):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://127.0.0.1:27124/commands/workspace%3Anew-tab",
+            text="ok",
+            headers={"content-type": "text/plain"},
+        )
+
+        async with rest_client as client:
+            result = await client.execute_command("workspace:new-tab")
+
+        assert result == "ok"
+
+
+class TestValidationAndHealth:
+    @pytest.mark.asyncio
+    async def test_health_check_false_on_connection_error(self, rest_client, httpx_mock: HTTPXMock):
         httpx_mock.add_exception(httpx.ConnectError("Connection refused"))
 
         async with rest_client as client:
-            result = await client.health_check()
-            assert result is False
+            assert await client.health_check() is False
+
+    @pytest.mark.asyncio
+    async def test_rejects_path_traversal(self, rest_client):
+        async with rest_client as client:
+            with pytest.raises(ValidationFailure):
+                await client.read_note("../secrets")
+
+    @pytest.mark.asyncio
+    async def test_rejects_bodies_over_one_megabyte(self, rest_client):
+        async with rest_client as client:
+            with pytest.raises(ValidationFailure):
+                await client.upsert_note("Inbox/Test", "x" * 1_000_001)
