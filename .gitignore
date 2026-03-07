@@ -8,3 +8,4 @@ __pycache__/
 *.egg-info/
 logs/
 run_janis.bat
+CLAUDE.md

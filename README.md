@@ -11,6 +11,82 @@ A Discord bot that manages your Obsidian vault through natural language. Send me
 
 Janis uses a tool-calling loop to intelligently decide when to search, read, or write notes based on your request.
 
+## Architecture
+
+```
+Discord Message → Adapter Layer → Orchestrator → Azure OpenAI (tool-calling loop)
+                                       ↓
+                                Tool Registry ← auto-discovered tool modules
+                                       ↓
+                              REST Client + VaultIndex → Obsidian Vault
+```
+
+- **Adapter layer** (`src/adapters/`) decouples Discord from the agent core
+- **Provider abstraction** (`src/agent/providers/`) wraps Azure OpenAI, making the LLM backend swappable
+- **Tool registry** (`src/tools/registry.py`) auto-discovers tool modules — add a file to `src/tools/` and it's registered
+- **Dynamic prompt builder** (`src/agent/prompt_builder.py`) with per-note TTL caching and concurrent fetches
+- **Persistent memory** (`src/agent/memory.py`) SQLite-backed conversation summarization
+- **CLI bridge** (`src/backend/cli_bridge.py`) for Obsidian CLI commands
+
+**Tool-calling loop**: Max 8 iterations. Uses Responses API — reasoning handled server-side, preventing chain-of-thought leakage.
+
+**Working memory**: In-memory ring buffer (`deque`, maxlen=4) stores the last 2 conversation turns (user + assistant). History injected into `input_items` before the current message. User messages attributed as `[DisplayName]: message`.
+
+## Project Structure
+
+```
+src/
+├── main.py                        # Entry point, signal handling
+├── errors.py                      # Shared error types
+├── config/settings.py             # Pydantic settings from .env
+├── adapters/
+│   ├── base.py                    # Abstract adapter interface
+│   └── discord/
+│       ├── client.py              # Discord message handler
+│       ├── embeds.py              # Rich embed formatting
+│       └── views.py               # Interactive UI components
+├── agent/
+│   ├── orchestrator.py            # Core agent logic, tool execution
+│   ├── prompt_builder.py          # Dynamic prompt with TTL caching
+│   ├── prompts.py                 # System prompt with vault context
+│   ├── memory.py                  # SQLite-backed persistent memory
+│   ├── tools.py                   # Legacy tool schemas (migrating)
+│   └── providers/
+│       ├── base.py                # Abstract LLM provider
+│       └── azure_openai.py        # Azure OpenAI Responses API
+├── tools/
+│   ├── registry.py                # Auto-discovery tool registry
+│   ├── base.py                    # Base tool class
+│   ├── _shared.py                 # Shared tool utilities
+│   ├── search_notes.py            # Search by name and content
+│   ├── search_dql.py              # Dataview DQL search
+│   ├── read_note.py               # Read note content
+│   ├── create_note.py             # Create new notes
+│   ├── update_note.py             # Overwrite note content
+│   ├── upsert_note.py             # Smart insert/update
+│   ├── append_note.py             # Append to notes
+│   ├── patch_note.py              # Patch note sections
+│   ├── move_note.py               # Move/rename notes
+│   ├── delete_note.py             # Delete notes
+│   ├── list_vault.py              # List vault structure
+│   ├── list_tags.py               # List vault tags
+│   ├── daily_read.py              # Read daily note
+│   ├── daily_append.py            # Append to daily note
+│   ├── open_note.py               # Open note in Obsidian
+│   ├── get_backlinks.py           # Get note backlinks
+│   ├── set_property.py            # Set frontmatter properties
+│   └── ask_clarification.py       # Ask user for clarification
+├── obsidian/
+│   ├── vault_index.py             # obsidiantools wrapper for search/backlinks
+│   └── rest_client.py             # Async HTTP client for REST API
+├── bot/
+│   └── client.py                  # Legacy Discord client
+└── backend/
+    ├── cli_bridge.py              # Obsidian CLI commands bridge
+    ├── rest_client.py             # Backend REST client
+    └── vault_index.py             # Backend vault index
+```
+
 ## Requirements
 
 - Python 3.11+
@@ -63,10 +139,9 @@ Clone the repository and create a `.env` file:
 ```bash
 git clone https://github.com/your-repo/janis.git
 cd janis
-cp .env.example .env  # or create .env manually
 ```
 
-Fill in your `.env` taking as reference the .env.example file:
+Create a `.env` file with the following variables:
 
 ```env
 # Discord
@@ -211,17 +286,24 @@ For Janis to work, you must have:
 
 ## Testing
 
-Run the smoke test to verify everything is configured:
-
-```bash
-python scripts/smoke_test.py
-```
-
 Run unit tests:
 
 ```bash
 python -m pytest tests/unit/ -v
 ```
+
+Run integration tests:
+
+```bash
+python -m pytest tests/integration/ -v
+```
+
+## Adding a New Tool
+
+1. Create a new file in `src/tools/` (e.g., `my_tool.py`)
+2. Define a class extending the base tool with a Pydantic model and OpenAI function schema
+3. The tool registry auto-discovers it — no manual registration needed
+4. Add execution logic in the tool module
 
 ## Troubleshooting
 
