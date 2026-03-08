@@ -11,7 +11,7 @@ from typing import Optional
 from src.adapters.base import AgentRequest, AgentResponse
 from src.agent.memory import MemoryStore
 from src.agent.prompt_builder import PromptBuilder
-from src.agent.providers.azure_openai import AzureOpenAIProvider
+from src.agent.providers.base import LLMProvider
 from src.backend.cli_bridge import ObsidianCLI
 from src.backend.rest_client import ObsidianRESTClient
 from src.backend.vault_index import VaultIndex
@@ -68,9 +68,14 @@ class Orchestrator:
 
         if self._provider is None:
             try:
-                if settings.llm_provider != "azure_openai":
+                if settings.llm_provider == "azure_openai":
+                    from src.agent.providers.azure_openai import AzureOpenAIProvider
+                    self._provider = AzureOpenAIProvider(settings)
+                elif settings.llm_provider == "azure_anthropic":
+                    from src.agent.providers.azure_anthropic import AzureAnthropicProvider
+                    self._provider = AzureAnthropicProvider(settings)
+                else:
                     raise ProviderError(f"Unsupported LLM provider '{settings.llm_provider}'.")
-                self._provider = AzureOpenAIProvider(settings)
             except Exception as exc:
                 logger.error("Failed to initialize LLM provider: %s", exc)
                 self._provider_error = str(exc)
@@ -134,6 +139,7 @@ class Orchestrator:
                 state={},
             )
             system_prompt, tools = await self._prompt_builder.build(rest_client, self._vault_index, base_ctx)
+            tools = self._provider.format_tool_schemas(tools)
             input_items = self._build_input_items(request, system_prompt)
 
             for _ in range(self._settings.max_tool_iterations):
@@ -167,11 +173,7 @@ class Orchestrator:
                         return response
 
                     input_items.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": tool_call.call_id,
-                            "output": result.content,
-                        }
+                        self._provider.format_tool_result(tool_call, result.content)
                     )
 
             input_items.append(

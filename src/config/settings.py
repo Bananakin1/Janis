@@ -26,14 +26,29 @@ class Settings(BaseSettings):
     )
 
     # Azure OpenAI
-    azure_openai_endpoint: str = Field(..., description="Azure OpenAI endpoint URL")
-    azure_openai_api_key: str = Field(..., description="Azure OpenAI API key")
+    azure_openai_endpoint: str = Field(
+        default="", description="Azure OpenAI endpoint URL"
+    )
+    azure_openai_api_key: str = Field(
+        default="", description="Azure OpenAI API key"
+    )
     azure_openai_deployment: str = Field(
         default="gpt-4o", description="Azure OpenAI deployment name"
     )
-    llm_provider: Literal["azure_openai"] = Field(
-        default="azure_openai",
+    llm_provider: Literal["azure_openai", "azure_anthropic"] = Field(
+        default="azure_anthropic",
         description="Configured LLM provider implementation.",
+    )
+
+    # Azure Anthropic
+    azure_anthropic_endpoint: str = Field(
+        default="", description="Azure Anthropic endpoint URL"
+    )
+    azure_anthropic_api_key: str = Field(
+        default="", description="Falls back to azure_openai_api_key if empty"
+    )
+    azure_anthropic_deployment: str = Field(
+        default="claude-opus-4-6", description="Azure Anthropic deployment/model name"
     )
 
     # Obsidian

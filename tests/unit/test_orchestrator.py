@@ -45,6 +45,12 @@ class DummyProvider:
     async def summarize(self, conversation_text: str) -> str:
         return "summary"
 
+    def format_tool_result(self, tool_call, output):
+        return {"type": "function_call_output", "call_id": tool_call.call_id, "output": output}
+
+    def format_tool_schemas(self, schemas):
+        return schemas
+
 
 class EchoParams(BaseModel):
     model_config = ConfigDict(extra="forbid")

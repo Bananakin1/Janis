@@ -37,3 +37,9 @@ class LLMProvider(Protocol):
 
     async def summarize(self, conversation_text: str) -> str:
         """Produce a compressed summary of a conversation transcript."""
+
+    def format_tool_result(self, tool_call: ToolCall, output: str) -> dict[str, Any]:
+        """Format a single tool result for re-injection into input items."""
+
+    def format_tool_schemas(self, schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert internal tool schemas to provider-specific format."""

@@ -103,6 +103,16 @@ class AzureOpenAIProvider(LLMProvider):
             raw_output_items=raw_output_items,
         )
 
+    def format_tool_result(self, tool_call: Any, output: str) -> dict[str, Any]:
+        return {
+            "type": "function_call_output",
+            "call_id": tool_call.call_id,
+            "output": output,
+        }
+
+    def format_tool_schemas(self, schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return schemas
+
     async def summarize(self, conversation_text: str) -> str:
         prompt = (
             "Summarize the following Janis conversation for long-term memory. "
