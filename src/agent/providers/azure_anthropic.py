@@ -151,7 +151,7 @@ class AzureAnthropicProvider(LLMProvider):
 
         kwargs: dict[str, Any] = {
             "model": self._model,
-            "max_tokens": 16384,
+            "max_tokens": 100_000,
             "system": system,
             "messages": messages,
             "thinking": {"type": "adaptive"},

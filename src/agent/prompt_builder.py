@@ -47,6 +47,7 @@ Prefer the most targeted tool for the job:
 - full note replacement: use update_note (read first, merge changes)
 - new note (known to not exist): use create_note (fails safely if it already exists)
 - new note (may already exist): use upsert_note
+- add a dated entry to a meeting note: use upsert_note with prepend=true (meeting notes use reverse chronological order — newest date heading first)
 - append to end of note: use append_note
 - keyword lookup: use search_notes
 - structured query (frontmatter properties, date ranges, sorting): use search_dql

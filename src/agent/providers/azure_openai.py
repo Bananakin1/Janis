@@ -67,7 +67,7 @@ class AzureOpenAIProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": self._settings.azure_openai_deployment,
             "input": input_items,
-            "max_output_tokens": 4096,
+            "max_output_tokens": 100_000,
             "store": False,
             "reasoning": {"effort": self._settings.reasoning_effort},
             "include": ["reasoning.encrypted_content"],
