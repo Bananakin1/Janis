@@ -138,7 +138,8 @@ class AzureAnthropicProvider(LLMProvider):
 
     @_llm_retry
     async def _create_message(self, **kwargs: Any) -> Any:
-        return await self._client.messages.create(**kwargs)
+        async with self._client.messages.stream(**kwargs) as stream:
+            return await stream.get_final_message()
 
     async def generate(
         self,
