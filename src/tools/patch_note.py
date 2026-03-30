@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import Field
 
 from src.tools._shared import PathToolModel, ensure_markdown_path
-from src.tools.base import ToolContext, ToolDefinition
+from src.tools.base import ToolContext, ToolDefinition, ToolResult
+
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+
+
+def _extract_headings(markdown: str) -> list[str]:
+    """Return all heading texts found in markdown content."""
+    return [m.group(2).strip() for m in _HEADING_RE.finditer(markdown)]
 
 
 class PatchNoteParams(PathToolModel):
@@ -28,8 +36,27 @@ class PatchNoteParams(PathToolModel):
     )
 
 
-async def execute(params: PatchNoteParams, ctx: ToolContext) -> str:
+async def execute(params: PatchNoteParams, ctx: ToolContext) -> ToolResult | str:
     note_path = ensure_markdown_path(params.path)
+
+    # Pre-flight: read the note and validate the target exists
+    if params.target_type == "heading":
+        note_content = await ctx.rest.read_note(note_path)
+        if note_content is None:
+            return ToolResult(
+                content=f"Patch failed: '{note_path}' does not exist."
+            )
+        headings = _extract_headings(note_content)
+        if params.target not in headings:
+            heading_list = "\n".join(f"  - {h}" for h in headings) if headings else "  (no headings found)"
+            return ToolResult(
+                content=(
+                    f"Patch failed: heading '{params.target}' not found in '{note_path}'.\n"
+                    f"Available headings:\n{heading_list}\n"
+                    "Retry with an exact heading from the list above, or use update_note instead."
+                )
+            )
+
     await ctx.rest.patch_note(
         note_path,
         params.content,

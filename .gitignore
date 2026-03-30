@@ -7,5 +7,8 @@ __pycache__/
 .claude/
 *.egg-info/
 logs/
+*.db
+*.sqlite
+*.sqlite3
 run_janis.bat
 CLAUDE.md
