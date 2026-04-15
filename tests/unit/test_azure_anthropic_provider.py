@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from src.agent.providers.azure_anthropic import (
     AzureAnthropicProvider,
     _merge_consecutive_user_messages,
@@ -16,7 +15,7 @@ from src.agent.providers.base import ToolCall
 @pytest.fixture
 def settings():
     return SimpleNamespace(
-        azure_anthropic_endpoint="https://centring-foundry.services.ai.azure.com/anthropic",
+        azure_anthropic_endpoint="https://test-foundry.services.ai.azure.com/anthropic",
         azure_anthropic_api_key="test-key",
         azure_anthropic_deployment="claude-opus-4-6",
         azure_openai_api_key="fallback-key",
